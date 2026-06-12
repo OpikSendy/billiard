@@ -26,6 +26,10 @@ export interface GameStateInfo {
   turnNumber: number;
   ballInHand: boolean;
   winner: string | null;
+  consecutiveFouls?: { 1: number; 2: number };
+  pushOutAvailable?: boolean;
+  isPushOutActive?: boolean;
+  pushOutResolvePending?: boolean;
 }
 
 export interface ShotData {
@@ -82,6 +86,8 @@ export interface SocketContextType {
   clearError: () => void;
   clearTurnResult: () => void;
   clearOpponentShot: () => void;
+  declarePushOut: () => void;
+  resolvePushOut: (accept: boolean) => void;
 }
 
 const SocketContext = createContext<SocketContextType | null>(null);
@@ -187,6 +193,14 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       setLastError(message);
     });
 
+    socket.on("push_out_declared", ({ gameState }) => {
+      setGameState(gameState);
+    });
+
+    socket.on("push_out_resolved", ({ gameState }) => {
+      setGameState(gameState);
+    });
+
     return () => {
       socket.disconnect();
       socketRef.current = null;
@@ -233,6 +247,14 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
   const clearTurnResult = useCallback(() => setLastTurnResult(null), []);
   const clearOpponentShot = useCallback(() => setLastOpponentShot(null), []);
 
+  const declarePushOut = useCallback(() => {
+    socketRef.current?.emit("declare_push_out");
+  }, []);
+
+  const resolvePushOut = useCallback((accept: boolean) => {
+    socketRef.current?.emit("resolve_push_out", { accept });
+  }, []);
+
   return (
     <SocketContext.Provider
       value={{
@@ -254,6 +276,8 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
         clearError,
         clearTurnResult,
         clearOpponentShot,
+        declarePushOut,
+        resolvePushOut,
       }}
     >
       {children}

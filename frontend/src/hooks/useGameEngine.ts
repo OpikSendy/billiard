@@ -23,6 +23,10 @@ export interface GameHookState {
   lowestBall: number | null;
   pocketedBalls: number[];
   ballInHand: boolean;
+  consecutiveFouls?: { 1: number; 2: number };
+  pushOutAvailable?: boolean;
+  isPushOutActive?: boolean;
+  pushOutResolvePending?: boolean;
 }
 
 export interface UseGameEngineProps {
@@ -122,6 +126,10 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
     lowestBall: null,
     pocketedBalls: [],
     ballInHand: false,
+    consecutiveFouls: { 1: 0, 2: 0 },
+    pushOutAvailable: false,
+    isPushOutActive: false,
+    pushOutResolvePending: false,
   });
 
   // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -225,6 +233,10 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
       lowestBall: getLowestBall(ballsRef.current),
       pocketedBalls: [],
       ballInHand: false,
+      consecutiveFouls: { 1: 0, 2: 0 },
+      pushOutAvailable: false,
+      isPushOutActive: false,
+      pushOutResolvePending: false,
     });
 
     startEngine(physics);
@@ -277,8 +289,83 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
       if (cueBallData && !cueBallData.isPocketed && !gameStateRef.current.isRunning) {
         const isMyTurn = !isMultiplayer || (gameState.currentPlayer === myPlayerIndex);
         if (isMyTurn) {
+          // 1. Calculate and Draw Trajectory Guide lines
+          const trajectory = calculateTrajectory(
+            cueBallData.body.position.x,
+            cueBallData.body.position.y,
+            aimState.angle,
+            ballsRef.current
+          );
+
+          ctx.save();
+          
+          // Draw path from cue ball to hit point or wall
+          ctx.strokeStyle = "rgba(255, 255, 255, 0.4)";
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([4, 4]);
+          ctx.beginPath();
+          ctx.moveTo(cueBallData.body.position.x, cueBallData.body.position.y);
+          ctx.lineTo(trajectory.endPoint.x, trajectory.endPoint.y);
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          if (trajectory.hitPoint && trajectory.targetDeflection && trajectory.cueDeflection) {
+            // Draw ghost ball at hit point (collision moment)
+            ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.arc(trajectory.hitPoint.x, trajectory.hitPoint.y, BALL_RADIUS, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Draw target ball deflection line (Yellow arrow)
+            const lineLength = 55;
+            ctx.strokeStyle = "#fbbf24"; // yellow-400
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            ctx.moveTo(trajectory.targetBallPos!.x, trajectory.targetBallPos!.y);
+            ctx.lineTo(
+              trajectory.targetBallPos!.x + trajectory.targetDeflection.x * lineLength,
+              trajectory.targetBallPos!.y + trajectory.targetDeflection.y * lineLength
+            );
+            ctx.stroke();
+
+            // Draw target ball arrowhead
+            drawArrowhead(
+              ctx,
+              trajectory.targetBallPos!.x + trajectory.targetDeflection.x * lineLength,
+              trajectory.targetBallPos!.y + trajectory.targetDeflection.y * lineLength,
+              Math.atan2(trajectory.targetDeflection.y, trajectory.targetDeflection.x),
+              "#fbbf24"
+            );
+
+            // Draw cue ball deflection line (White tangent)
+            ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(trajectory.hitPoint.x, trajectory.hitPoint.y);
+            ctx.lineTo(
+              trajectory.hitPoint.x + trajectory.cueDeflection.x * (lineLength * 0.7),
+              trajectory.hitPoint.y + trajectory.cueDeflection.y * (lineLength * 0.7)
+            );
+            ctx.stroke();
+
+            // Draw cue ball arrowhead
+            drawArrowhead(
+              ctx,
+              trajectory.hitPoint.x + trajectory.cueDeflection.x * (lineLength * 0.7),
+              trajectory.hitPoint.y + trajectory.cueDeflection.y * (lineLength * 0.7),
+              Math.atan2(trajectory.cueDeflection.y, trajectory.cueDeflection.x),
+              "rgba(255, 255, 255, 0.8)"
+            );
+          }
+          
+          ctx.restore();
+
+          // 2. Draw Cue Stick
           drawCueStick(ctx, cueBallData.body.position, aimState);
-          drawPowerMeter(ctx, aimState.power);
+
+          // 3. Draw Curved Power Meter Gauge around Cue Ball
+          drawPowerMeter(ctx, cueBallData.body.position.x, cueBallData.body.position.y, aimState.power);
         }
       }
     },
@@ -477,36 +564,65 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
     ctx.restore();
   };
 
-  const drawPowerMeter = (ctx: CanvasRenderingContext2D, power: number) => {
-    const barX = TABLE_CONFIG.x + TABLE_CONFIG.width + 20;
-    const barY = TABLE_CONFIG.y + TABLE_CONFIG.height * 0.2;
-    const barH = TABLE_CONFIG.height * 0.6;
-    const barW = 16;
+  const drawPowerMeter = (
+    ctx: CanvasRenderingContext2D,
+    bx: number,
+    by: number,
+    power: number
+  ) => {
+    const radius = 45;
 
-    // Track
-    ctx.fillStyle = "rgba(255,255,255,0.1)";
+    ctx.save();
+    
+    // Draw background track arc
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.08)";
+    ctx.lineWidth = 6;
+    ctx.lineCap = "round";
     ctx.beginPath();
-    ctx.roundRect(barX, barY, barW, barH, 8);
-    ctx.fill();
+    ctx.arc(bx, by, radius, Math.PI * 0.5, Math.PI * 1.65, false);
+    ctx.stroke();
 
-    // Fill
-    const fillH = barH * power;
-    const powerGrad = ctx.createLinearGradient(0, barY + barH, 0, barY);
-    powerGrad.addColorStop(0, "#22c55e");
-    powerGrad.addColorStop(0.6, "#eab308");
-    powerGrad.addColorStop(1, "#ef4444");
+    // Create gradient
+    const pGrad = ctx.createLinearGradient(bx - radius, by + radius, bx - radius, by - radius);
+    pGrad.addColorStop(0, "#3b82f6");    // Blue
+    pGrad.addColorStop(0.35, "#06b6d4"); // Cyan
+    pGrad.addColorStop(0.65, "#eab308"); // Yellow
+    pGrad.addColorStop(0.85, "#ef4444"); // Red
 
-    ctx.fillStyle = powerGrad;
+    // Active power fill arc
+    const endAngle = Math.PI * 0.5 + power * (Math.PI * 1.15);
+    ctx.strokeStyle = pGrad;
+    ctx.lineWidth = 6;
+    ctx.lineCap = "round";
+    
+    // Glow effect
+    ctx.shadowColor = power > 0.75 ? "#f87171" : power > 0.35 ? "#38bdf8" : "#60a5fa";
+    ctx.shadowBlur = 10;
+    
     ctx.beginPath();
-    ctx.roundRect(barX, barY + barH - fillH, barW, fillH, 8);
-    ctx.fill();
+    ctx.arc(bx, by, radius, Math.PI * 0.5, endAngle, false);
+    ctx.stroke();
 
-    // Label
-    ctx.fillStyle = "rgba(255,255,255,0.7)";
-    ctx.font = "11px Inter, sans-serif";
+    ctx.shadowBlur = 0;
+
+    // Draw percentage labels
+    ctx.font = "bold 9px Inter, sans-serif";
     ctx.textAlign = "center";
-    ctx.fillText("PWR", barX + barW / 2, barY + barH + 18);
-    ctx.fillText(`${Math.round(power * 100)}%`, barX + barW / 2, barY - 8);
+    ctx.textBaseline = "middle";
+
+    const drawLabel = (val: string, angleOffset: number, color: string) => {
+      const lx = bx + (radius + 14) * Math.cos(angleOffset);
+      const ly = by + (radius + 14) * Math.sin(angleOffset);
+      ctx.fillStyle = color;
+      ctx.fillText(val, lx, ly);
+    };
+
+    drawLabel("0%", Math.PI * 0.5, "rgba(255, 255, 255, 0.4)");
+    drawLabel("35%", Math.PI * 0.85, "#22d3ee");
+    drawLabel("65%", Math.PI * 1.25, "#fbbf24");
+    drawLabel("75%", Math.PI * 1.65, "#f87171");
+
+    ctx.restore();
   };
 
   // ─── Pocket Check (per frame) ─────────────────────────────────────────────
@@ -631,10 +747,12 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
     // In multiplayer, check if it's our turn
     if (isMultiplayer && gameState.currentPlayer !== myPlayerIndex) return;
 
+    const shotPower = aimState.power > 0.01 ? aimState.power : 0.1;
+
     if (isMultiplayer && onEmitShot) {
       onEmitShot({
         angle: aimState.angle,
-        power: aimState.power > 0 ? aimState.power : 0.3,
+        power: shotPower,
         cueBallPos: {
           x: cueBallData.body.position.x,
           y: cueBallData.body.position.y,
@@ -650,7 +768,7 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
       isRunning: true,
     });
 
-    shootCueBall(cueBallData.body, aimState.angle, aimState.power > 0 ? aimState.power : 0.3);
+    shootCueBall(cueBallData.body, aimState.angle, shotPower);
     setAimState((prev) => ({ ...prev, power: 0, isDragging: false }));
     setGameState((prev) => ({ ...prev, isSimulating: true, foulMessage: "" }));
   }, [aimState, getCueBall, gameState.winner, isMultiplayer, myPlayerIndex, gameState.currentPlayer, onEmitShot]);
@@ -675,7 +793,7 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
         if (prev.isDragging) {
           // Power based on drag distance from ball
           const dist = Math.sqrt((pos.x - bx) ** 2 + (pos.y - by) ** 2);
-          const power = Math.min(dist / 150, 1);
+          const power = Math.max(0, Math.min(1, (dist - 30) / 150));
           return { ...prev, angle, power };
         }
         return { ...prev, angle };
@@ -692,7 +810,7 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
       if (isMultiplayer && gameState.currentPlayer !== myPlayerIndex) return;
 
       if (e.button === 0) {
-        setAimState((prev) => ({ ...prev, isDragging: true, power: 0 }));
+        setAimState((prev) => ({ ...prev, isDragging: true }));
       }
     },
     [gameState.winner, isMultiplayer, gameState.currentPlayer, myPlayerIndex]
@@ -701,18 +819,9 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
   const handleMouseUp = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       if (e.button !== 0) return;
-      const wasDragging = aimState.isDragging;
       setAimState((prev) => ({ ...prev, isDragging: false }));
-
-      // In multiplayer, check if it's our turn
-      if (isMultiplayer && gameState.currentPlayer !== myPlayerIndex) return;
-
-      if (wasDragging && aimState.power > 0.02 && !gameState.ballInHand) {
-        handleShoot();
-      }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [aimState, isMultiplayer, gameState.currentPlayer, myPlayerIndex, handleShoot, gameState.ballInHand]
+    []
   );
 
   const handleCanvasClick = useCallback(
@@ -748,6 +857,10 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
       pocketedBalls: socketGameState.pocketedBalls,
       ballInHand: socketGameState.currentPlayerIndex === myPlayerIndex ? socketGameState.ballInHand : false,
       winner: socketGameState.winner,
+      consecutiveFouls: socketGameState.consecutiveFouls,
+      pushOutAvailable: socketGameState.pushOutAvailable,
+      isPushOutActive: socketGameState.isPushOutActive,
+      pushOutResolvePending: socketGameState.pushOutResolvePending,
     }));
   }, [isMultiplayer, socketGameState, myPlayerIndex]);
 
@@ -838,6 +951,10 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
       pocketedBalls: nextSocketState.pocketedBalls,
       ballInHand: nextSocketState.currentPlayerIndex === myPlayerIndex ? nextSocketState.ballInHand : false,
       lowestBall: getLowestBall(ballsRef.current),
+      consecutiveFouls: nextSocketState.consecutiveFouls,
+      pushOutAvailable: nextSocketState.pushOutAvailable,
+      isPushOutActive: nextSocketState.isPushOutActive,
+      pushOutResolvePending: nextSocketState.pushOutResolvePending,
     }));
 
     Object.assign(gameStateRef.current, resetTurnState(gameStateRef.current));
@@ -858,8 +975,35 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
       isSimulating: false,
       winner: gameOver.winner,
       pocketedBalls: gameOver.gameState.pocketedBalls,
+      consecutiveFouls: gameOver.gameState.consecutiveFouls,
+      pushOutAvailable: false,
+      isPushOutActive: false,
+      pushOutResolvePending: false,
     }));
   }, [isMultiplayer, gameOver]);
+
+  // Listen to wheel events on the canvas to set power
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const handleWheelEvent = (e: WheelEvent) => {
+      if (gameStateRef.current.isRunning || gameState.winner) return;
+      if (isMultiplayer && gameState.currentPlayer !== myPlayerIndex) return;
+
+      e.preventDefault();
+      const delta = e.deltaY < 0 ? 0.05 : -0.05;
+      setAimState((prev) => ({
+        ...prev,
+        power: Math.max(0, Math.min(1, prev.power + delta)),
+      }));
+    };
+
+    canvas.addEventListener("wheel", handleWheelEvent, { passive: false });
+    return () => {
+      canvas.removeEventListener("wheel", handleWheelEvent);
+    };
+  }, [isMultiplayer, gameState.currentPlayer, myPlayerIndex, gameState.winner]);
 
   // ─── Lifecycle ────────────────────────────────────────────────────────────
 
@@ -899,4 +1043,136 @@ function lightenColor(hex: string, amount: number): string {
 function getTextColor(ballNumber: number): string {
   const darkBalls = [2, 4, 6, 7, 8];
   return darkBalls.includes(ballNumber) ? "#ffffff" : "#000000";
+}
+
+// ─── Trajectory Calculations ───────────────────────────────────────────────
+
+interface TrajectoryResult {
+  endPoint: { x: number; y: number };
+  hitPoint: { x: number; y: number } | null;
+  targetBallPos: { x: number; y: number } | null;
+  targetDeflection: { x: number; y: number } | null;
+  cueDeflection: { x: number; y: number } | null;
+}
+
+function calculateTrajectory(
+  cx: number,
+  cy: number,
+  angle: number,
+  balls: BallData[]
+): TrajectoryResult {
+  const dx = Math.cos(angle);
+  const dy = Math.sin(angle);
+  
+  let closestT = Infinity;
+  let closestBall: BallData | null = null;
+  
+  const R = BALL_RADIUS;
+  
+  balls.forEach((ball) => {
+    if (ball.number === 0 || ball.isPocketed) return;
+    
+    const bx = ball.body.position.x;
+    const by = ball.body.position.y;
+    
+    const vx = cx - bx;
+    const vy = cy - by;
+    
+    // Quadratic equation: t^2 + 2(v . d) t + (v^2 - 4R^2) = 0
+    const bCoeff = 2 * (vx * dx + vy * dy);
+    const cCoeff = (vx * vx + vy * vy) - 4 * R * R;
+    
+    const discriminant = bCoeff * bCoeff - 4 * cCoeff;
+    if (discriminant >= 0) {
+      const t1 = (-bCoeff - Math.sqrt(discriminant)) / 2;
+      const t2 = (-bCoeff + Math.sqrt(discriminant)) / 2;
+      
+      const t = t1 > 0 ? t1 : (t2 > 0 ? t2 : -1);
+      if (t > 0 && t < closestT) {
+        closestT = t;
+        closestBall = ball;
+      }
+    }
+  });
+  
+  const xMin = TABLE_CONFIG.x + R;
+  const xMax = TABLE_CONFIG.x + TABLE_CONFIG.width - R;
+  const yMin = TABLE_CONFIG.y + R;
+  const yMax = TABLE_CONFIG.y + TABLE_CONFIG.height - R;
+  
+  let wallT = Infinity;
+  if (dx < 0) wallT = Math.min(wallT, (xMin - cx) / dx);
+  if (dx > 0) wallT = Math.min(wallT, (xMax - cx) / dx);
+  if (dy < 0) wallT = Math.min(wallT, (yMin - cy) / dy);
+  if (dy > 0) wallT = Math.min(wallT, (yMax - cy) / dy);
+  
+  if (closestT < wallT && closestBall) {
+    const hitX = cx + closestT * dx;
+    const hitY = cy + closestT * dy;
+    
+    const targetX = (closestBall as BallData).body.position.x;
+    const targetY = (closestBall as BallData).body.position.y;
+    
+    // normal vector from cue ball center at hit to target ball center
+    const nx = targetX - hitX;
+    const ny = targetY - hitY;
+    const nDist = Math.sqrt(nx * nx + ny * ny);
+    const normalX = nDist > 0 ? nx / nDist : dx;
+    const normalY = nDist > 0 ? ny / nDist : dy;
+    
+    // target ball deflection direction
+    const targetDeflectX = normalX;
+    const targetDeflectY = normalY;
+    
+    // cue ball deflection direction: d - (d . n) n
+    const dot = dx * normalX + dy * normalY;
+    const cueDeflectX = dx - dot * normalX;
+    const cueDeflectY = dy - dot * normalY;
+    const cueDeflectDist = Math.sqrt(cueDeflectX * cueDeflectX + cueDeflectY * cueDeflectY);
+    
+    return {
+      endPoint: { x: hitX, y: hitY },
+      hitPoint: { x: hitX, y: hitY },
+      targetBallPos: { x: targetX, y: targetY },
+      targetDeflection: {
+        x: targetDeflectX,
+        y: targetDeflectY,
+      },
+      cueDeflection: cueDeflectDist > 0 ? {
+        x: cueDeflectX / cueDeflectDist,
+        y: cueDeflectY / cueDeflectDist,
+      } : { x: -normalY, y: normalX },
+    };
+  } else {
+    const endX = cx + wallT * dx;
+    const endY = cy + wallT * dy;
+    return {
+      endPoint: { x: endX, y: endY },
+      hitPoint: null,
+      targetBallPos: null,
+      targetDeflection: null,
+      cueDeflection: null,
+    };
+  }
+}
+
+function drawArrowhead(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  angle: number,
+  color: string
+) {
+  const size = 6;
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(-size, -size * 0.6);
+  ctx.lineTo(-size, size * 0.6);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
 }
