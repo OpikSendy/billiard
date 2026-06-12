@@ -215,9 +215,14 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
             const hitBallNumber = parseInt(rawNum, 10);
 
             if (!isNaN(hitBallNumber)) {
-              // Dynamically find the lowest numbered ball currently alive on the table
-              const activeRemaining = ballsRef.current.filter((b) => b.number > 0 && !b.isPocketed);
-              const lowestBallRemaining = activeRemaining.length > 0 ? Math.min(...activeRemaining.map((b) => b.number)) : 1;
+              // Calculate the true lowest ball directly from what's currently alive in the Matter world
+              const activeBodies = Matter.Composite.allBodies(physics.engine.world);
+              const activeTargetNumbers = activeBodies
+                .filter((b) => b.label && b.label.startsWith("target-ball-"))
+                .map((b) => parseInt(b.label.replace("target-ball-", ""), 10))
+                .filter((num) => !isNaN(num));
+
+              const lowestBallRemaining = activeTargetNumbers.length > 0 ? Math.min(...activeTargetNumbers) : 9;
 
               firstBallHitThisTurnRef.current = hitBallNumber;
               gameStateRef.current.firstHitBall = hitBallNumber;
