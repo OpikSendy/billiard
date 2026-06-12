@@ -290,8 +290,10 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
             const dy = ballBody.position.y - pocketBody.position.y;
             const dist = Math.sqrt(dx * dx + dy * dy);
 
-            // Trigger pocketing logic ONLY if distance is less than 12 pixels
-            if (dist < 12) {
+            // Trigger sinking when the ball center enters the pocket's mouth
+            // Use the pocket body's actual radius so fast AND slow balls are caught
+            const captureRadius = (pocketBody as any).circleRadius ?? 18;
+            if (dist < captureRadius) {
               ballData.isSinking = true;
               ballData.currentVisualRadius = BALL_RADIUS;
               ballData.targetPocketX = pocketBody.position.x;
@@ -357,10 +359,16 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
       if (drawSceneRef.current) {
         drawSceneRef.current(ctx, canvas.width, canvas.height);
       }
-      // Check if simulation ended (Wait until all balls are physically stopped AND no balls are visually sinking)
+      // Per-frame pocket polling: catches slow-moving balls that creep into pockets
+      // (collision sensor handles fast balls; this handles the rest)
+      if (gameStateRef.current.isRunning && checkPocketsRef.current) {
+        checkPocketsRef.current();
+      }
+
+      // Check if simulation ended (all balls stopped AND no sinking animation in progress)
       if (gameStateRef.current.isRunning) {
         const activeBodies = ballsRef.current
-          .filter((b) => !b.isPocketed)
+          .filter((b) => !b.isPocketed && !b.isSinking)
           .map((b) => b.body);
         const anySinking = ballsRef.current.some((b) => b.isSinking);
         if (allBallsStopped(activeBodies) && !anySinking) {
@@ -891,20 +899,32 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
   const checkPockets = useCallback(() => {
     const pockets = pocketsRef.current;
     ballsRef.current.forEach((ballData) => {
-      if (ballData.isPocketed) return;
-      const pocketIdx = checkPocketed(ballData.body, pockets);
-      if (pocketIdx !== -1) {
-        ballData.isPocketed = true;
+      // Skip balls already handled
+      if (ballData.isPocketed || ballData.isSinking) return;
 
-        if (ballData.number === 0) {
-          // Cue ball scratch
-          gameStateRef.current.cueBallPocketed = true;
-          Matter.Body.setPosition(ballData.body, { x: -1000, y: -1000 });
+      for (const pocket of pockets) {
+        const dx = ballData.body.position.x - pocket.x;
+        const dy = ballData.body.position.y - pocket.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        // Ball center is within the pocket mouth — trigger sinking animation
+        if (dist < pocket.radius) {
+          ballData.isSinking = true;
+          ballData.currentVisualRadius = BALL_RADIUS;
+          ballData.targetPocketX = pocket.x;
+          ballData.targetPocketY = pocket.y;
+
+          // Freeze physics immediately
           Matter.Body.setVelocity(ballData.body, { x: 0, y: 0 });
-        } else {
-          gameStateRef.current.pocketedThisTurn.push(ballData.number);
-          Matter.Body.setPosition(ballData.body, { x: -2000, y: -1000 });
-          Matter.Body.setVelocity(ballData.body, { x: 0, y: 0 });
+          Matter.Body.setAngularVelocity(ballData.body, 0);
+          // Strip collision mask so sinking ball ignores everything
+          ballData.body.collisionFilter.mask = 0;
+
+          // Pocketing a ball satisfies the cushion-touch rule
+          if (gameStateRef.current) {
+            gameStateRef.current.railContactMade = true;
+          }
+          break; // One pocket match per ball is enough
         }
       }
     });
