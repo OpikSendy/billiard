@@ -39,13 +39,13 @@ export default function HomePage() {
             ▶ Play Solo (Phase 1)
           </Link>
 
-          <button
-            disabled
+          <Link
+            href="/lobby"
             id="btn-multiplayer"
-            className="px-8 py-3 bg-white/5 border border-white/10 text-white/30 font-bold rounded-xl text-sm cursor-not-allowed"
+            className="px-8 py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl transition-all duration-200 shadow-lg shadow-blue-900/40 hover:shadow-blue-700/40 hover:-translate-y-0.5 text-sm"
           >
-            🌐 Multiplayer (Coming Soon)
-          </button>
+            🌐 Multiplayer
+          </Link>
         </div>
       </div>
 
