@@ -200,40 +200,51 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
     Matter.Events.on(physics.engine, "collisionStart", (event) => {
       // 1. Process first ball hit logic
       if (firstBallHitThisTurnRef.current === null) {
+        // Helper functions for defensive label matching
+        const isCueBall = (label: string) => 
+          label === 'cue-ball' || label === 'ball-0' || label.toLowerCase().includes('cue');
+
+        const getTargetBallNumber = (label: string): number | null => {
+          if (!label) return null;
+          const match = label.match(/(?:target-ball-|ball-)(\d+)/);
+          if (match && match[1]) {
+            const num = parseInt(match[1], 10);
+            return num === 0 ? null : num; // 0 belongs to the cue ball in old format
+          }
+          return null;
+        };
+
         for (const pair of event.pairs) {
           const { bodyA, bodyB } = pair;
+          if (!bodyA.label || !bodyB.label) continue;
 
-          const isCueBall = (b: Matter.Body) => b.label === "cue-ball";
-          const isTargetBall = (b: Matter.Body) => b.label.startsWith("target-ball-");
+          // Detect if one of the bodies is the cue ball
+          const hasCueBall = isCueBall(bodyA.label) || isCueBall(bodyB.label);
+          const targetBody = isCueBall(bodyA.label) ? bodyB : bodyA;
+          const hitBallNumber = getTargetBallNumber(targetBody.label);
 
-          const hasCueBall = isCueBall(bodyA) || isCueBall(bodyB);
-          const targetBody = isCueBall(bodyA) ? bodyB : bodyA;
+          // If the cue ball hit a valid target ball
+          if (hasCueBall && hitBallNumber !== null) {
+            // Dynamically scan the physics world to find which target balls are still alive
+            const activeBodies = Matter.Composite.allBodies(physics.engine.world);
+            const activeTargetNumbers = activeBodies
+              .map(b => getTargetBallNumber(b.label))
+              .filter((num): num is number => num !== null);
 
-          if (hasCueBall && isTargetBall(targetBody)) {
-            // Safe String Parsing
-            const rawNum = targetBody.label.replace("target-ball-", "");
-            const hitBallNumber = parseInt(rawNum, 10);
+            const lowestBallRemaining = activeTargetNumbers.length > 0 ? Math.min(...activeTargetNumbers) : 1;
 
-            if (!isNaN(hitBallNumber)) {
-              // Calculate the true lowest ball directly from what's currently alive in the Matter world
-              const activeBodies = Matter.Composite.allBodies(physics.engine.world);
-              const activeTargetNumbers = activeBodies
-                .filter((b) => b.label && b.label.startsWith("target-ball-"))
-                .map((b) => parseInt(b.label.replace("target-ball-", ""), 10))
-                .filter((num) => !isNaN(num));
-
-              const lowestBallRemaining = activeTargetNumbers.length > 0 ? Math.min(...activeTargetNumbers) : 9;
-
+            if (hitBallNumber === lowestBallRemaining) {
+              // LEGAL HIT!
               firstBallHitThisTurnRef.current = hitBallNumber;
-              gameStateRef.current.firstHitBall = hitBallNumber;
-
-              if (hitBallNumber === lowestBallRemaining) {
-                console.log(`[Collision] Legal hit registered on ball: ${hitBallNumber}. True lowest remaining: ${lowestBallRemaining}`);
-              } else {
-                console.log(`[Collision] Foul! Hit ball ${hitBallNumber} but lowest remaining was ${lowestBallRemaining}`);
-              }
-              break; // Stop processing further pairs once the first hit is determined
+              if (gameStateRef.current) gameStateRef.current.firstHitBall = hitBallNumber;
+              console.log(`[GAME LOG] Legal hit registered on ball: ${hitBallNumber}`);
+            } else {
+              // ILLEGAL HIT!
+              firstBallHitThisTurnRef.current = hitBallNumber;
+              if (gameStateRef.current) gameStateRef.current.firstHitBall = hitBallNumber;
+              console.log(`[GAME LOG] Foul! Hit ball ${hitBallNumber} but lowest was ${lowestBallRemaining}`);
             }
+            break; // Stop evaluating other pairs once the first hit is secured
           }
         }
       }
