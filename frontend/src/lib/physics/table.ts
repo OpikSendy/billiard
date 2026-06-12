@@ -147,6 +147,24 @@ export function getTablePockets(config: TableConfig): Pocket[] {
 }
 
 /**
+ * Creates standard pockets as static circular sensor bodies.
+ */
+export function createTablePockets(config: TableConfig): Matter.Body[] {
+  const pockets = getTablePockets(config);
+  return pockets.map((p, index) => {
+    return Matter.Bodies.circle(p.x, p.y, p.radius, {
+      isStatic: true,
+      isSensor: true,
+      label: `pocket-${index}`,
+      collisionFilter: {
+        category: 0x0004,
+        mask: 0x0001
+      }
+    });
+  });
+}
+
+/**
  * Checks if a ball has fallen into any pocket.
  * Returns the pocket index or -1 if not pocketed.
  */

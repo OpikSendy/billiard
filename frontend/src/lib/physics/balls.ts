@@ -23,6 +23,10 @@ export interface BallData {
   body: Matter.Body;
   number: number; // 0 = cue ball
   isPocketed: boolean;
+  isSinking?: boolean;
+  currentVisualRadius?: number;
+  targetPocketX?: number;
+  targetPocketY?: number;
 }
 
 const ballPhysicsOptions: Matter.IBodyDefinition = {
@@ -33,7 +37,7 @@ const ballPhysicsOptions: Matter.IBodyDefinition = {
   density: 0.004,
   inertia: Infinity,     // prevent rotation (top-down view)
   inverseInertia: 0,
-  collisionFilter: { category: 0x0001, mask: 0x0001 | 0x0002 },
+  collisionFilter: { category: 0x0001, mask: 0x0001 | 0x0002 | 0x0004 },
   label: "ball",
 };
 

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 import Matter from "matter-js";
 import { createPhysicsEngine, startEngine, stopEngine, allBallsStopped, PhysicsEngine } from "@/lib/physics/engine";
-import { createTableWalls, getTablePockets, checkPocketed, TableConfig, Pocket } from "@/lib/physics/table";
+import { createTableWalls, getTablePockets, checkPocketed, createTablePockets, TableConfig, Pocket } from "@/lib/physics/table";
 import { createCueBall, createRackedBalls, shootCueBall, BallData, BALL_RADIUS } from "@/lib/physics/balls";
 import { getLowestBall, evaluateTurn, resetTurnState, getFoulMessage, GameState, TurnResult } from "@/lib/game/rules";
 import { GameStateInfo, ShotData, BallPos, FoulData, TurnResult as SocketTurnResult } from "@/hooks/useSocket";
@@ -183,6 +183,8 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
 
     // Create pockets
     pocketsRef.current = getTablePockets(TABLE_CONFIG);
+    const pocketBodies = createTablePockets(TABLE_CONFIG);
+    Matter.World.add(physics.world, pocketBodies);
 
     // Create balls
     const cueBall = createCueBall(CUE_BALL_START.x, CUE_BALL_START.y);
@@ -245,6 +247,43 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
           }
         }
       }
+
+      // 3. Process pocket sensors overlap (sinking trigger)
+      for (const pair of event.pairs) {
+        const { bodyA, bodyB } = pair;
+
+        const isBallBody = (b: Matter.Body) => b.label === "cue-ball" || b.label.startsWith("target-ball-");
+        const isPocketBody = (b: Matter.Body) => b.label.startsWith("pocket-");
+
+        if ((isBallBody(bodyA) && isPocketBody(bodyB)) || (isBallBody(bodyB) && isPocketBody(bodyA))) {
+          const ballBody = isBallBody(bodyA) ? bodyA : bodyB;
+          const pocketBody = isPocketBody(bodyA) ? bodyA : bodyB;
+
+          // Find the corresponding BallData
+          const ballData = ballsRef.current.find((b) => b.body === ballBody);
+          if (ballData && !ballData.isPocketed && !ballData.isSinking) {
+            // Calculate distance between centers
+            const dx = ballBody.position.x - pocketBody.position.x;
+            const dy = ballBody.position.y - pocketBody.position.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+
+            // Trigger pocketing logic ONLY if distance is less than 12 pixels
+            if (dist < 12) {
+              ballData.isSinking = true;
+              ballData.currentVisualRadius = BALL_RADIUS;
+              ballData.targetPocketX = pocketBody.position.x;
+              ballData.targetPocketY = pocketBody.position.y;
+
+              // Zero physical velocity
+              Matter.Body.setVelocity(ballBody, { x: 0, y: 0 });
+              Matter.Body.setAngularVelocity(ballBody, 0);
+
+              // Disable physics collision for this ball while sinking
+              ballBody.collisionFilter.mask = 0;
+            }
+          }
+        }
+      }
     });
 
     // Reset game state ref
@@ -290,16 +329,13 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
       if (drawSceneRef.current) {
         drawSceneRef.current(ctx, canvas.width, canvas.height);
       }
-      if (checkPocketsRef.current) {
-        checkPocketsRef.current();
-      }
-
-      // Check if simulation ended
+      // Check if simulation ended (Wait until all balls are physically stopped AND no balls are visually sinking)
       if (gameStateRef.current.isRunning) {
         const activeBodies = ballsRef.current
           .filter((b) => !b.isPocketed)
           .map((b) => b.body);
-        if (allBallsStopped(activeBodies)) {
+        const anySinking = ballsRef.current.some((b) => b.isSinking);
+        if (allBallsStopped(activeBodies) && !anySinking) {
           if (endTurnRef.current) {
             endTurnRef.current();
           }
@@ -598,6 +634,41 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
     ballsRef.current.forEach((ballData) => {
       if (ballData.isPocketed) return;
       const { body, number } = ballData;
+
+      // Sinking visual animation logic
+      let radius = BALL_RADIUS;
+      if (ballData.isSinking) {
+        ballData.currentVisualRadius = (ballData.currentVisualRadius ?? BALL_RADIUS) * 0.85;
+        radius = ballData.currentVisualRadius;
+
+        // Slide visual position towards pocket center
+        if (ballData.targetPocketX !== undefined && ballData.targetPocketY !== undefined) {
+          const nextX = body.position.x + (ballData.targetPocketX - body.position.x) * 0.2;
+          const nextY = body.position.y + (ballData.targetPocketY - body.position.y) * 0.2;
+          Matter.Body.setPosition(body, { x: nextX, y: nextY });
+        }
+
+        // Once visual radius drops below 1px, destroy from world and update rules state
+        if (radius < 1) {
+          ballData.isPocketed = true;
+          ballData.isSinking = false;
+          if (physicsRef.current) {
+            Matter.World.remove(physicsRef.current.world, body);
+          }
+
+          if (number === 0) {
+            gameStateRef.current.cueBallPocketed = true;
+            Matter.Body.setPosition(body, { x: -1000, y: -1000 });
+            Matter.Body.setVelocity(body, { x: 0, y: 0 });
+          } else {
+            gameStateRef.current.pocketedThisTurn.push(number);
+            Matter.Body.setPosition(body, { x: -2000, y: -1000 });
+            Matter.Body.setVelocity(body, { x: 0, y: 0 });
+          }
+          return;
+        }
+      }
+
       const { x, y } = body.position;
 
       ctx.save();
@@ -621,25 +692,25 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
         // White base
         ctx.fillStyle = "#FFFFFF";
         ctx.beginPath();
-        ctx.arc(x, y, BALL_RADIUS, 0, Math.PI * 2);
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
         ctx.fill();
 
         // Stripe band
         ctx.fillStyle = colors[number] ?? "#888";
         ctx.beginPath();
-        ctx.arc(x, y, BALL_RADIUS, Math.PI * 0.25, Math.PI * 0.75);
-        ctx.arc(x, y, BALL_RADIUS, Math.PI * 1.25, Math.PI * 1.75);
+        ctx.arc(x, y, radius, Math.PI * 0.25, Math.PI * 0.75);
+        ctx.arc(x, y, radius, Math.PI * 1.25, Math.PI * 1.75);
         ctx.fill();
       } else {
         const grad = ctx.createRadialGradient(
-          x - BALL_RADIUS * 0.3, y - BALL_RADIUS * 0.3, BALL_RADIUS * 0.1,
-          x, y, BALL_RADIUS
+          x - radius * 0.3, y - radius * 0.3, radius * 0.1,
+          x, y, radius
         );
         grad.addColorStop(0, lightenColor(colors[number] ?? "#888", 40));
         grad.addColorStop(1, colors[number] ?? "#888");
         ctx.fillStyle = grad;
         ctx.beginPath();
-        ctx.arc(x, y, BALL_RADIUS, 0, Math.PI * 2);
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
         ctx.fill();
       }
 
@@ -650,7 +721,7 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
       // Ball number
       if (number > 0) {
         ctx.fillStyle = isStripe ? "#000" : getTextColor(number);
-        ctx.font = `bold ${BALL_RADIUS * 0.95}px Inter, sans-serif`;
+        ctx.font = `bold ${radius * 0.95}px Inter, sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
 
@@ -658,7 +729,7 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
           // White circle behind number for stripes
           ctx.fillStyle = "#fff";
           ctx.beginPath();
-          ctx.arc(x, y, BALL_RADIUS * 0.48, 0, Math.PI * 2);
+          ctx.arc(x, y, radius * 0.48, 0, Math.PI * 2);
           ctx.fill();
           ctx.fillStyle = "#000";
         }
