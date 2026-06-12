@@ -196,52 +196,55 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
 
     // Register collision events
     Matter.Events.on(physics.engine, "collisionStart", (event) => {
-      event.pairs.forEach((pair) => {
-        const { bodyA, bodyB } = pair;
+      // 1. Process first ball hit logic
+      if (firstBallHitThisTurnRef.current === null) {
+        for (const pair of event.pairs) {
+          const { bodyA, bodyB } = pair;
 
+          const isCueBall = (b: Matter.Body) => b.label === "cue-ball";
+          const isTargetBall = (b: Matter.Body) => b.label.startsWith("target-ball-");
+
+          const hasCueBall = isCueBall(bodyA) || isCueBall(bodyB);
+          const targetBody = isCueBall(bodyA) ? bodyB : bodyA;
+
+          if (hasCueBall && isTargetBall(targetBody)) {
+            // Safe String Parsing
+            const rawNum = targetBody.label.replace("target-ball-", "");
+            const hitBallNumber = parseInt(rawNum, 10);
+
+            if (!isNaN(hitBallNumber)) {
+              // Dynamically find the lowest numbered ball currently alive on the table
+              const activeRemaining = ballsRef.current.filter((b) => b.number > 0 && !b.isPocketed);
+              const lowestBallRemaining = activeRemaining.length > 0 ? Math.min(...activeRemaining.map((b) => b.number)) : 1;
+
+              firstBallHitThisTurnRef.current = hitBallNumber;
+              gameStateRef.current.firstHitBall = hitBallNumber;
+
+              if (hitBallNumber === lowestBallRemaining) {
+                console.log(`[Collision] Legal hit registered on ball: ${hitBallNumber}. True lowest remaining: ${lowestBallRemaining}`);
+              } else {
+                console.log(`[Collision] Foul! Hit ball ${hitBallNumber} but lowest remaining was ${lowestBallRemaining}`);
+              }
+              break; // Stop processing further pairs once the first hit is determined
+            }
+          }
+        }
+      }
+
+      // 2. Process rail contact (cushion timing logic)
+      for (const pair of event.pairs) {
+        const { bodyA, bodyB } = pair;
         const isCueBall = (b: Matter.Body) => b.label === "cue-ball";
         const isTargetBall = (b: Matter.Body) => b.label.startsWith("target-ball-");
         const isCushion = (b: Matter.Body) => b.label.startsWith("cushion");
 
-        // Action B (Strict Filter in Collision Event)
-        if (firstBallHitThisTurnRef.current === null) {
-          let hitBallNum: number | null = null;
-          if (isCueBall(bodyA) && isTargetBall(bodyB)) {
-            // Safe String Parsing
-            const rawNum = bodyB.label.replace("target-ball-", "");
-            const parsed = parseInt(rawNum, 10);
-            if (!isNaN(parsed)) {
-              hitBallNum = parsed;
-            }
-          } else if (isCueBall(bodyB) && isTargetBall(bodyA)) {
-            // Safe String Parsing
-            const rawNum = bodyA.label.replace("target-ball-", "");
-            const parsed = parseInt(rawNum, 10);
-            if (!isNaN(parsed)) {
-              hitBallNum = parsed;
-            }
-          }
-
-          if (hitBallNum !== null) {
-            firstBallHitThisTurnRef.current = hitBallNum;
-            gameStateRef.current.firstHitBall = hitBallNum;
-
-            // Compare the hit number with the true lowest remaining target ball in ballsRef.current
-            const activeRemaining = ballsRef.current.filter((b) => b.number > 0 && !b.isPocketed);
-            const trueMin = activeRemaining.length > 0 ? Math.min(...activeRemaining.map((b) => b.number)) : null;
-
-            console.log(`[Collision] Cue ball hit ball-${hitBallNum} first. True lowest remaining target: ${trueMin}. Legal hit: ${hitBallNum === trueMin}`);
-          }
-        }
-
-        // Cushion Rule Timing: rail/cushion contact only validates if it happens AFTER a legal ball hit (firstBallHitThisTurnRef.current !== null)
         const isAnyBall = (b: Matter.Body) => isCueBall(b) || isTargetBall(b);
         if ((isAnyBall(bodyA) && isCushion(bodyB)) || (isAnyBall(bodyB) && isCushion(bodyA))) {
           if (gameStateRef.current.isRunning && firstBallHitThisTurnRef.current !== null) {
             gameStateRef.current.railContactMade = true;
           }
         }
-      });
+      }
     });
 
     // Reset game state ref

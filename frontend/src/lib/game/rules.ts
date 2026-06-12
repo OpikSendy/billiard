@@ -44,7 +44,7 @@ export function evaluateTurn(state: GameState): TurnResult {
   const activeBalls = balls.filter((b) => b.number > 0 && !b.isPocketed);
   const lowestBefore = Math.min(
     ...balls
-      .filter((b) => b.number > 0 && !pocketedThisTurn.includes(b.number))
+      .filter((b) => b.number > 0 && (!b.isPocketed || pocketedThisTurn.includes(b.number)))
       .map((b) => b.number)
   );
 
