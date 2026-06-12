@@ -175,6 +175,8 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
     }
 
     const physics = createPhysicsEngine();
+    physics.engine.positionIterations = 15;
+    physics.engine.velocityIterations = 15;
     physicsRef.current = physics;
 
     // Create table walls
@@ -252,12 +254,14 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
       // 2. Process rail contact (cushion timing logic)
       for (const pair of event.pairs) {
         const { bodyA, bodyB } = pair;
-        const isCueBall = (b: Matter.Body) => b.label === "cue-ball";
-        const isTargetBall = (b: Matter.Body) => b.label.startsWith("target-ball-");
-        const isCushion = (b: Matter.Body) => b.label.startsWith("cushion");
+        if (!bodyA.label || !bodyB.label) continue;
+        const isCueBallLabel = (l: string) => l === 'cue-ball' || l === 'ball-0' || l.toLowerCase().includes('cue');
+        const isTargetBallLabel = (l: string) => /(?:target-ball-|ball-)(\d+)/.test(l) && !isCueBallLabel(l);
+        const isCushionLabel = (l: string) => l === 'cushion';
 
-        const isAnyBall = (b: Matter.Body) => isCueBall(b) || isTargetBall(b);
-        if ((isAnyBall(bodyA) && isCushion(bodyB)) || (isAnyBall(bodyB) && isCushion(bodyA))) {
+        const isAnyBall = (b: Matter.Body) => isCueBallLabel(b.label) || isTargetBallLabel(b.label);
+        if ((isAnyBall(bodyA) && isCushionLabel(bodyB.label)) || (isAnyBall(bodyB) && isCushionLabel(bodyA.label))) {
+          // Rail contact is only valid if it occurs AFTER a legal hit has already been registered
           if (gameStateRef.current.isRunning && firstBallHitThisTurnRef.current !== null) {
             gameStateRef.current.railContactMade = true;
           }
@@ -267,9 +271,12 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
       // 3. Process pocket sensors overlap (sinking trigger)
       for (const pair of event.pairs) {
         const { bodyA, bodyB } = pair;
+        if (!bodyA.label || !bodyB.label) continue;
 
-        const isBallBody = (b: Matter.Body) => b.label === "cue-ball" || b.label.startsWith("target-ball-");
-        const isPocketBody = (b: Matter.Body) => b.label.startsWith("pocket-");
+        const isCueBallLabel = (l: string) => l === 'cue-ball' || l === 'ball-0' || l.toLowerCase().includes('cue');
+        const isTargetBallLabel = (l: string) => /(?:target-ball-|ball-)(\d+)/.test(l) && !isCueBallLabel(l);
+        const isBallBody = (b: Matter.Body) => isCueBallLabel(b.label) || isTargetBallLabel(b.label);
+        const isPocketBody = (b: Matter.Body) => b.label === "pocket";
 
         if ((isBallBody(bodyA) && isPocketBody(bodyB)) || (isBallBody(bodyB) && isPocketBody(bodyA))) {
           const ballBody = isBallBody(bodyA) ? bodyA : bodyB;
@@ -296,6 +303,11 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
 
               // Disable physics collision for this ball while sinking
               ballBody.collisionFilter.mask = 0;
+
+              // Pocketing a ball satisfies the cushion touch/pocketing rule
+              if (gameStateRef.current) {
+                gameStateRef.current.railContactMade = true;
+              }
             }
           }
         }
@@ -378,7 +390,7 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
       drawBalls(ctx);
 
       const cueBallData = getCueBall();
-      if (cueBallData && !cueBallData.isPocketed && !gameStateRef.current.isRunning) {
+      if (cueBallData && !cueBallData.isPocketed && !gameStateRef.current.isRunning && !gameState.isSimulating) {
         const isMyTurn = !isMultiplayer || (gameState.currentPlayer === myPlayerIndex);
         if (isMyTurn) {
           // 1. Calculate and Draw Trajectory Guide lines
@@ -612,9 +624,9 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
     if (physicsRef.current) {
       const bodies = physicsRef.current.world.bodies;
       bodies.forEach((body) => {
-        if (body.label === "cushion-bumper") {
+        if (body.label === "cushion" && (body as any).circleRadius) {
           ctx.beginPath();
-          ctx.arc(body.position.x, body.position.y, body.circleRadius || 7, 0, Math.PI * 2);
+          ctx.arc(body.position.x, body.position.y, (body as any).circleRadius || 7, 0, Math.PI * 2);
           ctx.fill();
           ctx.stroke();
         }

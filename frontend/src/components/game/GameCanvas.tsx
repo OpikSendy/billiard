@@ -148,10 +148,10 @@ export default function GameCanvas({
             height={CANVAS_HEIGHT}
             className="block"
             style={{
-              cursor: gameState.ballInHand && (!isMultiplayer || gameState.currentPlayer === myPlayerIndex)
-                ? "crosshair"
-                : gameState.isSimulating
+              cursor: gameState.isSimulating
                 ? "default"
+                : gameState.ballInHand && (!isMultiplayer || gameState.currentPlayer === myPlayerIndex)
+                ? "crosshair"
                 : isMultiplayer && gameState.currentPlayer !== myPlayerIndex
                 ? "not-allowed"
                 : "default",

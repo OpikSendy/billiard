@@ -1,8 +1,8 @@
 import Matter from "matter-js";
 
 export const BALL_RADIUS = 11;
-export const BALL_FRICTION = 0.008;       // rolling friction on table
-export const BALL_RESTITUTION = 0.9;      // bounciness between balls
+export const BALL_FRICTION = 0.05;        // rolling friction on table
+export const BALL_RESTITUTION = 0.96;     // bounciness between balls
 export const BALL_FRICTION_AIR = 0.018;   // air drag (simulates table cloth)
 
 // 9-ball color palette
