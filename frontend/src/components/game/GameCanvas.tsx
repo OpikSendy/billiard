@@ -151,7 +151,7 @@ export default function GameCanvas({
               cursor: gameState.ballInHand && (!isMultiplayer || gameState.currentPlayer === myPlayerIndex)
                 ? "crosshair"
                 : gameState.isSimulating
-                ? "not-allowed"
+                ? "default"
                 : isMultiplayer && gameState.currentPlayer !== myPlayerIndex
                 ? "not-allowed"
                 : "default",
