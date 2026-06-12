@@ -25,8 +25,6 @@ const CUSHION_FRICTION = 0.0;
  */
 export function createTableWalls(config: TableConfig): Matter.Body[] {
   const { x, y, width, height } = config;
-  const cx = x + width / 2;
-  const cy = y + height / 2;
 
   const wallOptions = {
     isStatic: true,
@@ -37,32 +35,91 @@ export function createTableWalls(config: TableConfig): Matter.Body[] {
     collisionFilter: { category: 0x0002, mask: 0x0001 },
   };
 
-  return [
-    // Top wall
-    Matter.Bodies.rectangle(
-      cx, y - WALL_THICKNESS / 2,
-      width, WALL_THICKNESS,
-      { ...wallOptions, label: "wall-top" }
-    ),
-    // Bottom wall
-    Matter.Bodies.rectangle(
-      cx, y + height + WALL_THICKNESS / 2,
-      width, WALL_THICKNESS,
-      { ...wallOptions, label: "wall-bottom" }
-    ),
-    // Left wall
-    Matter.Bodies.rectangle(
-      x - WALL_THICKNESS / 2, cy,
-      WALL_THICKNESS, height,
-      { ...wallOptions, label: "wall-left" }
-    ),
-    // Right wall
-    Matter.Bodies.rectangle(
-      x + width + WALL_THICKNESS / 2, cy,
-      WALL_THICKNESS, height,
-      { ...wallOptions, label: "wall-right" }
-    ),
+  const bodies: Matter.Body[] = [];
+
+  // Split Top wall: Left & Right segments
+  const topSegLength = width / 2 - 60;
+  const topY = y - WALL_THICKNESS / 2;
+  
+  // Top-Left cushion
+  bodies.push(Matter.Bodies.rectangle(
+    x + 35 + topSegLength / 2, topY,
+    topSegLength, WALL_THICKNESS,
+    { ...wallOptions, label: "wall-top-left" }
+  ));
+  
+  // Top-Right cushion
+  bodies.push(Matter.Bodies.rectangle(
+    x + width / 2 + 25 + topSegLength / 2, topY,
+    topSegLength, WALL_THICKNESS,
+    { ...wallOptions, label: "wall-top-right" }
+  ));
+
+  // Split Bottom wall: Left & Right segments
+  const botY = y + height + WALL_THICKNESS / 2;
+  // Bottom-Left cushion
+  bodies.push(Matter.Bodies.rectangle(
+    x + 35 + topSegLength / 2, botY,
+    topSegLength, WALL_THICKNESS,
+    { ...wallOptions, label: "wall-bottom-left" }
+  ));
+  // Bottom-Right cushion
+  bodies.push(Matter.Bodies.rectangle(
+    x + width / 2 + 25 + topSegLength / 2, botY,
+    topSegLength, WALL_THICKNESS,
+    { ...wallOptions, label: "wall-bottom-right" }
+  ));
+
+  // Left cushion
+  const sideSegLength = height - 70;
+  const leftX = x - WALL_THICKNESS / 2;
+  bodies.push(Matter.Bodies.rectangle(
+    leftX, y + 35 + sideSegLength / 2,
+    WALL_THICKNESS, sideSegLength,
+    { ...wallOptions, label: "wall-left" }
+  ));
+
+  // Right cushion
+  const rightX = x + width + WALL_THICKNESS / 2;
+  bodies.push(Matter.Bodies.rectangle(
+    rightX, y + 35 + sideSegLength / 2,
+    WALL_THICKNESS, sideSegLength,
+    { ...wallOptions, label: "wall-right" }
+  ));
+
+  // Rounded bumper circles at the ends of the cushions to act as realistic pocket inlets
+  const bumperRadius = 7;
+  const bumperOptions = {
+    ...wallOptions,
+    label: "wall-bumper",
+  };
+
+  const bumpers = [
+    // Top-Left ends
+    { x: x + 35, y: y - 2 },
+    { x: x + width / 2 - 25, y: y - 2 },
+    // Top-Right ends
+    { x: x + width / 2 + 25, y: y - 2 },
+    { x: x + width - 35, y: y - 2 },
+    // Bottom-Left ends
+    { x: x + 35, y: y + height + 2 },
+    { x: x + width / 2 - 25, y: y + height + 2 },
+    // Bottom-Right ends
+    { x: x + width / 2 + 25, y: y + height + 2 },
+    { x: x + width - 35, y: y + height + 2 },
+    // Left ends
+    { x: x - 2, y: y + 35 },
+    { x: x - 2, y: y + height - 35 },
+    // Right ends
+    { x: x + width + 2, y: y + 35 },
+    { x: x + width + 2, y: y + height - 35 },
   ];
+
+  bumpers.forEach((pos) => {
+    bodies.push(Matter.Bodies.circle(pos.x, pos.y, bumperRadius, bumperOptions));
+  });
+
+  return bodies;
 }
 
 /**
