@@ -141,10 +141,20 @@ export function shootCueBall(
   Matter.Body.setVelocity(cueBall, { x: 0, y: 0 });
   Matter.Body.setAngularVelocity(cueBall, 0);
 
+  // Calculate normalized direction vector based on the angle
+  const dirX = Math.cos(angle);
+  const dirY = Math.sin(angle);
+
+  // Apply force exactly to the cue ball's center position (center of mass) to ensure zero torque
+  const position = cueBall.position;
+
+  // Use a small scaling factor for Matter.js force to prevent balls from moving too fast
   const MAX_FORCE = 0.085;
-  const force = power * MAX_FORCE;
-  Matter.Body.applyForce(cueBall, cueBall.position, {
-    x: Math.cos(angle) * force,
-    y: Math.sin(angle) * force,
-  });
+  const force = {
+    x: dirX * power * MAX_FORCE,
+    y: dirY * power * MAX_FORCE,
+  };
+
+  Matter.Body.applyForce(cueBall, position, force);
 }
+

@@ -56,7 +56,7 @@ export interface UseGameEngineReturn {
   handleMouseDown: (e: React.MouseEvent<HTMLCanvasElement>) => void;
   handleMouseUp: (e: React.MouseEvent<HTMLCanvasElement>) => void;
   handleCanvasClick: (e: React.MouseEvent<HTMLCanvasElement>) => void;
-  handleShoot: () => void;
+  handleShoot: (powerOverride?: number) => void;
   resetGame: () => void;
   placeCueBall: (x: number, y: number) => void;
   setPower: (power: number) => void;
@@ -100,6 +100,16 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
   const ballsRef = useRef<BallData[]>([]);
   const pocketsRef = useRef<Pocket[]>([]);
   const animFrameRef = useRef<number>(0);
+
+  // High-frequency aiming refs to prevent stale closure issues in the render loop
+  const currentAngleRef = useRef<number>(0);
+  const currentPowerRef = useRef<number>(0);
+  const isDraggingRef = useRef<boolean>(false);
+
+  // Keep latest rendering/game callbacks in refs to avoid stale closures in requestAnimationFrame
+  const drawSceneRef = useRef<any>(null);
+  const checkPocketsRef = useRef<any>(null);
+  const endTurnRef = useRef<any>(null);
 
   // Turn-tracking refs (not React state — updated per physics frame)
   const gameStateRef = useRef<GameState>({
@@ -254,8 +264,12 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
     if (!ctx) return;
 
     const render = () => {
-      drawScene(ctx, canvas.width, canvas.height);
-      checkPockets();
+      if (drawSceneRef.current) {
+        drawSceneRef.current(ctx, canvas.width, canvas.height);
+      }
+      if (checkPocketsRef.current) {
+        checkPocketsRef.current();
+      }
 
       // Check if simulation ended
       if (gameStateRef.current.isRunning) {
@@ -263,7 +277,9 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
           .filter((b) => !b.isPocketed)
           .map((b) => b.body);
         if (allBallsStopped(activeBodies)) {
-          endTurn();
+          if (endTurnRef.current) {
+            endTurnRef.current();
+          }
         }
       }
 
@@ -294,7 +310,7 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
           const trajectory = calculateTrajectory(
             cueBallData.body.position.x,
             cueBallData.body.position.y,
-            aimState.angle,
+            currentAngleRef.current,
             ballsRef.current
           );
 
@@ -363,14 +379,11 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
           ctx.restore();
 
           // 2. Draw Cue Stick
-          drawCueStick(ctx, cueBallData.body.position, aimState);
-
-          // 3. Draw Curved Power Meter Gauge around Cue Ball
-          drawPowerMeter(ctx, cueBallData.body.position.x, cueBallData.body.position.y, aimState.power);
+          drawCueStick(ctx, cueBallData.body.position, currentAngleRef.current, currentPowerRef.current);
         }
       }
     },
-    [aimState, getCueBall, isMultiplayer, myPlayerIndex, gameState.currentPlayer]
+    [getCueBall, isMultiplayer, myPlayerIndex, gameState.currentPlayer]
   );
 
   const drawTable = (ctx: CanvasRenderingContext2D) => {
@@ -637,25 +650,28 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
   const drawCueStick = (
     ctx: CanvasRenderingContext2D,
     ballPos: Matter.Vector,
-    aim: AimState
+    angle: number,
+    power: number
   ) => {
-    const { angle, power } = aim;
     const pullBack = 20 + power * 50; // cue stick pulled back with power
     const tipDist = BALL_RADIUS + 4 + pullBack;
     const stickLength = 200;
 
-    const tipX = ballPos.x - Math.cos(angle) * tipDist;
-    const tipY = ballPos.y - Math.sin(angle) * tipDist;
-    const tailX = tipX - Math.cos(angle) * stickLength;
-    const tailY = tipY - Math.sin(angle) * stickLength;
+    // Use canvas transformation for 360-degree rotation around cue ball
+    ctx.save();
+    ctx.translate(ballPos.x, ballPos.y);
+    ctx.rotate(angle);
 
-    // Cue stick gradient
-    const stickGrad = ctx.createLinearGradient(tipX, tipY, tailX, tailY);
+    // Tip and tail coordinates in local translated/rotated system
+    const tipX = -tipDist;
+    const tailX = -tipDist - stickLength;
+
+    // Cue stick gradient defined in local coordinates
+    const stickGrad = ctx.createLinearGradient(tipX, 0, tailX, 0);
     stickGrad.addColorStop(0, "#F5DEB3");   // tip (light wood)
     stickGrad.addColorStop(0.3, "#D2691E"); // shaft
     stickGrad.addColorStop(1, "#4A2C0A");   // butt (dark)
 
-    ctx.save();
     ctx.strokeStyle = stickGrad;
     ctx.lineWidth = 6;
     ctx.lineCap = "round";
@@ -665,24 +681,25 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
     ctx.shadowBlur = 8;
 
     ctx.beginPath();
-    ctx.moveTo(tipX, tipY);
-    ctx.lineTo(tailX, tailY);
+    ctx.moveTo(tipX, 0);
+    ctx.lineTo(tailX, 0);
     ctx.stroke();
 
     ctx.shadowBlur = 0;
     ctx.restore();
 
-    // Aim trajectory dotted line
+    // Aim trajectory dotted line in local coordinates
     const dashLen = 80;
     ctx.save();
+    ctx.translate(ballPos.x, ballPos.y);
+    ctx.rotate(angle);
     ctx.strokeStyle = "rgba(255,255,255,0.25)";
     ctx.lineWidth = 1;
     ctx.setLineDash([4, 6]);
     ctx.beginPath();
-    ctx.moveTo(ballPos.x + Math.cos(angle) * BALL_RADIUS, ballPos.y + Math.sin(angle) * BALL_RADIUS);
-    ctx.lineTo(ballPos.x + Math.cos(angle) * (BALL_RADIUS + dashLen), ballPos.y + Math.sin(angle) * (BALL_RADIUS + dashLen));
+    ctx.moveTo(BALL_RADIUS, 0);
+    ctx.lineTo(BALL_RADIUS + dashLen, 0);
     ctx.stroke();
-    ctx.setLineDash([]);
     ctx.restore();
   };
 
@@ -860,7 +877,7 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
     setGameState((prev) => ({ ...prev, ballInHand: false, foulMessage: "" }));
   }, [getCueBall]);
 
-  const handleShoot = useCallback(() => {
+  const handleShoot = useCallback((powerOverride?: number) => {
     if (gameStateRef.current.isRunning) return;
     if (gameState.winner) return;
     const cueBallData = getCueBall();
@@ -869,11 +886,11 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
     // In multiplayer, check if it's our turn
     if (isMultiplayer && gameState.currentPlayer !== myPlayerIndex) return;
 
-    const shotPower = aimState.power > 0.01 ? aimState.power : 0.1;
+    const shotPower = powerOverride !== undefined ? powerOverride : (currentPowerRef.current > 0.01 ? currentPowerRef.current : 0.1);
 
     if (isMultiplayer && onEmitShot) {
       onEmitShot({
-        angle: aimState.angle,
+        angle: currentAngleRef.current,
         power: shotPower,
         cueBallPos: {
           x: cueBallData.body.position.x,
@@ -890,10 +907,12 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
       isRunning: true,
     });
 
-    shootCueBall(cueBallData.body, aimState.angle, shotPower);
+    shootCueBall(cueBallData.body, currentAngleRef.current, shotPower);
+    currentPowerRef.current = 0;
+    isDraggingRef.current = false;
     setAimState((prev) => ({ ...prev, power: 0, isDragging: false }));
     setGameState((prev) => ({ ...prev, isSimulating: true, foulMessage: "" }));
-  }, [aimState, getCueBall, gameState.winner, isMultiplayer, myPlayerIndex, gameState.currentPlayer, onEmitShot]);
+  }, [getCueBall, gameState.winner, isMultiplayer, myPlayerIndex, gameState.currentPlayer, onEmitShot]);
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -911,6 +930,7 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
       const by = cueBallData.body.position.y;
       const angle = Math.atan2(pos.y - by, pos.x - bx);
 
+      currentAngleRef.current = angle;
       setAimState((prev) => ({ ...prev, angle }));
     },
     [getCueBall, getCanvasPos, gameState.winner, isMultiplayer, gameState.currentPlayer, myPlayerIndex]
@@ -924,18 +944,41 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
       if (isMultiplayer && gameState.currentPlayer !== myPlayerIndex) return;
 
       if (e.button === 0) {
+        isDraggingRef.current = true;
         setAimState((prev) => ({ ...prev, isDragging: true }));
+
+        const cueBallData = getCueBall();
+        if (cueBallData && !cueBallData.isPocketed) {
+          const pos = getCanvasPos(e);
+          const bx = cueBallData.body.position.x;
+          const by = cueBallData.body.position.y;
+          const angle = Math.atan2(pos.y - by, pos.x - bx);
+          currentAngleRef.current = angle;
+          setAimState((prev) => ({ ...prev, angle }));
+        }
       }
     },
-    [gameState.winner, isMultiplayer, gameState.currentPlayer, myPlayerIndex]
+    [gameState.winner, isMultiplayer, gameState.currentPlayer, myPlayerIndex, getCueBall, getCanvasPos]
   );
 
   const handleMouseUp = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       if (e.button !== 0) return;
+
+      const wasDragging = isDraggingRef.current;
+      isDraggingRef.current = false;
       setAimState((prev) => ({ ...prev, isDragging: false }));
+
+      // Shoot on click/release if we were dragging, not in ball-in-hand mode, and game is not running/won
+      if (wasDragging && !gameState.ballInHand && !gameStateRef.current.isRunning && !gameState.winner) {
+        const isMyTurn = !isMultiplayer || (gameState.currentPlayer === myPlayerIndex);
+        if (isMyTurn) {
+          // Trigger a temporary full-power shot (power = 1.0)
+          handleShoot(1.0);
+        }
+      }
     },
-    []
+    [gameState.ballInHand, gameState.winner, isMultiplayer, gameState.currentPlayer, myPlayerIndex, handleShoot]
   );
 
   const handleCanvasClick = useCallback(
@@ -960,9 +1003,11 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
   }, [initGame]);
 
   const setPower = useCallback((power: number) => {
+    const nextPower = Math.max(0, Math.min(1, power));
+    currentPowerRef.current = nextPower;
     setAimState((prev) => ({
       ...prev,
-      power: Math.max(0, Math.min(1, power)),
+      power: nextPower,
     }));
   }, []);
 
@@ -1114,10 +1159,14 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
 
       e.preventDefault();
       const delta = e.deltaY < 0 ? 0.05 : -0.05;
-      setAimState((prev) => ({
-        ...prev,
-        power: Math.max(0, Math.min(1, prev.power + delta)),
-      }));
+      setAimState((prev) => {
+        const nextPower = Math.max(0, Math.min(1, prev.power + delta));
+        currentPowerRef.current = nextPower;
+        return {
+          ...prev,
+          power: nextPower,
+        };
+      });
     };
 
     canvas.addEventListener("wheel", handleWheelEvent, { passive: false });
@@ -1136,6 +1185,19 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Keep rendering and logic callbacks fresh
+  useEffect(() => {
+    drawSceneRef.current = drawScene;
+  }, [drawScene]);
+
+  useEffect(() => {
+    checkPocketsRef.current = checkPockets;
+  }, [checkPockets]);
+
+  useEffect(() => {
+    endTurnRef.current = endTurn;
+  }, [endTurn]);
 
   return {
     canvasRef,

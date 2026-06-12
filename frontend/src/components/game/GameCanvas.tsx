@@ -241,7 +241,7 @@ export default function GameCanvas({
           {/* Shoot Button */}
           {isMyTurn && !gameState.isSimulating && !gameState.winner && !gameState.ballInHand && (
             <button
-              onClick={handleShoot}
+              onClick={() => handleShoot()}
               className="px-6 py-2 bg-yellow-500 hover:bg-yellow-400 text-slate-950 font-bold rounded-lg text-sm shadow-lg shadow-yellow-500/20 active:scale-95 duration-100 transition-all"
             >
               ⚡ Shoot
