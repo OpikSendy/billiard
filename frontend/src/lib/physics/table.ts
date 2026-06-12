@@ -28,7 +28,7 @@ export function createTableWalls(config: TableConfig): Matter.Body[] {
   const cx = x + width / 2;
   const cy = y + height / 2;
 
-  const wallOptions: Matter.IBodyDefinition = {
+  const wallOptions = {
     isStatic: true,
     restitution: CUSHION_RESTITUTION,
     friction: CUSHION_FRICTION,
