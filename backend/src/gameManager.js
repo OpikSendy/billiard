@@ -35,6 +35,13 @@ function initGame(roomId, players) {
     winner: null,
     players,                       // [{ socketId, nickname, playerIndex }]
     startedAt: new Date(),
+    consecutiveFouls: {
+      1: 0,
+      2: 0,
+    },
+    pushOutAvailable: false,
+    isPushOutActive: false,
+    pushOutResolvePending: false,
   };
 
   gameStates.set(roomId, state);
@@ -113,14 +120,37 @@ function recordSyncResult(roomId, socketId, result) {
  * Determines next active player, handles fouls, checks win.
  *
  * @param {string} roomId
- * @param {{ foul: string|null, ballsPocketed: number[], won: boolean, switchTurn: boolean }} turnResult
+ * @param {{ foul: string|null, ballsPocketed: number[], won: boolean, switchTurn: boolean, isPushOutResolve?: boolean }} turnResult
  * @param {string} winnerNickname - set if won=true
  */
 function applyTurnResult(roomId, turnResult, winnerNickname = null) {
   const state = gameStates.get(roomId);
   if (!state) return null;
 
-  const { foul, ballsPocketed, won, switchTurn } = turnResult;
+  const { foul, ballsPocketed, won, switchTurn, isPushOutResolve } = turnResult;
+
+  // Reset push out active state after shot is evaluated
+  state.isPushOutActive = false;
+
+  // If push out resolve is pending, set it
+  if (isPushOutResolve) {
+    state.pushOutResolvePending = true;
+    state.pushOutAvailable = false;
+  } else {
+    // Normal shot, push out no longer available
+    state.pushOutAvailable = false;
+  }
+
+  // Update consecutive fouls
+  if (foul) {
+    state.consecutiveFouls[state.currentPlayerIndex] += 1;
+    if (state.consecutiveFouls[state.currentPlayerIndex] >= 3) {
+      state.winner = winnerNickname || `Player ${state.currentPlayerIndex === 1 ? 2 : 1}`;
+    }
+  } else {
+    // Clean hit resets foul count
+    state.consecutiveFouls[state.currentPlayerIndex] = 0;
+  }
 
   // Update pocketed balls (exclude cue ball)
   ballsPocketed.forEach((n) => {
@@ -131,17 +161,25 @@ function applyTurnResult(roomId, turnResult, winnerNickname = null) {
 
   state.ballInHand = foul === "scratch" || foul === "wrong_ball";
 
-  if (won) {
+  if (state.winner) {
+    // Game is over (3 fouls or normal win)
+  } else if (won) {
     state.winner = winnerNickname;
   } else if (switchTurn) {
     state.currentPlayerIndex = state.currentPlayerIndex === 1 ? 2 : 1;
   }
 
   state.turnNumber += 1;
+
+  // Push out is available exactly on turn 2 (first shot after break)
+  if (state.turnNumber === 2 && !state.winner) {
+    state.pushOutAvailable = true;
+  }
+
   state.pendingSyncResults.clear();
 
   console.log(
-    `[Game] Room ${roomId} turn ${state.turnNumber}: foul=${foul}, pocketed=[${ballsPocketed}], nextPlayer=${state.currentPlayerIndex}`
+    `[Game] Room ${roomId} turn ${state.turnNumber}: foul=${foul}, pocketed=[${ballsPocketed}], nextPlayer=${state.currentPlayerIndex}, consecutiveFouls=${JSON.stringify(state.consecutiveFouls)}`
   );
 
   return state;
@@ -173,6 +211,10 @@ function sanitizeGameState(state) {
     turnNumber: state.turnNumber,
     ballInHand: state.ballInHand,
     winner: state.winner,
+    consecutiveFouls: state.consecutiveFouls,
+    pushOutAvailable: state.pushOutAvailable,
+    isPushOutActive: state.isPushOutActive,
+    pushOutResolvePending: state.pushOutResolvePending,
   };
 }
 

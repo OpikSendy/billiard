@@ -184,17 +184,37 @@ io.on("connection", (socket) => {
     const { authoritative, desynced, deviation } = validateSync(result.allResults);
     const { foulData: authFoulData, positions: authPositions } = authoritative;
 
-    // Build turn result from authoritative foul data
-    const turnResult = buildTurnResult(authFoulData, authPositions);
+    const gameState = gameManager.getGameState(room.id);
+    const isPushOutActive = gameState?.isPushOutActive || false;
 
-    // Determine winner nickname if ball 9 was pocketed legally
+    // Build turn result from authoritative foul data
+    const turnResult = buildTurnResult(authFoulData, authPositions, isPushOutActive);
+
+    // Determine winner nickname if ball 9 was pocketed legally OR if 3-foul rule triggered
     let winnerNickname = null;
-    if (turnResult.won) {
-      const gameState = gameManager.getGameState(room.id);
-      const winner = gameState?.players.find(
+    let authFoul = authFoulData?.foul || turnResult.foul;
+
+    if (gameState) {
+      // Check if this new foul triggers 3-foul forfeit
+      if (authFoul) {
+        const currentFouls = (gameState.consecutiveFouls[gameState.currentPlayerIndex] || 0) + 1;
+        if (currentFouls >= 3) {
+          turnResult.won = true;
+          turnResult.foul = "three_fouls";
+          
+          // Winner is the OTHER player!
+          const opponentIndex = gameState.currentPlayerIndex === 1 ? 2 : 1;
+          const opponent = gameState.players.find((p) => p.playerIndex === opponentIndex);
+          winnerNickname = opponent?.nickname || `Player ${opponentIndex}`;
+        }
+      }
+    }
+
+    if (turnResult.won && !winnerNickname && gameState) {
+      const winner = gameState.players.find(
         (p) => p.playerIndex === gameState.currentPlayerIndex
       );
-      winnerNickname = winner?.nickname || `Player ${gameState?.currentPlayerIndex}`;
+      winnerNickname = winner?.nickname || `Player ${gameState.currentPlayerIndex}`;
     }
 
     // Apply turn result to game state
@@ -224,6 +244,52 @@ io.on("connection", (socket) => {
         deviation: deviation.toFixed(2),
       });
     }
+  });
+
+  // ── DECLARE PUSH OUT ─────────────────────────────────────────────────────
+  socket.on("declare_push_out", () => {
+    const room = roomManager.getRoomBySocket(socket.id);
+    if (!room || room.status !== "playing") return;
+
+    const state = gameManager.getGameState(room.id);
+    if (!state) return;
+
+    const shooter = room.players.find((p) => p.socketId === socket.id);
+    if (!shooter || shooter.playerIndex !== state.currentPlayerIndex) return;
+
+    if (state.pushOutAvailable) {
+      state.isPushOutActive = true;
+      io.to(room.id).emit("push_out_declared", {
+        gameState: gameManager.sanitizeGameState(state)
+      });
+      console.log(`[Socket] Room ${room.id}: player ${shooter.playerIndex} declared Push Out`);
+    }
+  });
+
+  // ── RESOLVE PUSH OUT ─────────────────────────────────────────────────────
+  socket.on("resolve_push_out", ({ accept } = {}) => {
+    const room = roomManager.getRoomBySocket(socket.id);
+    if (!room || room.status !== "playing") return;
+
+    const state = gameManager.getGameState(room.id);
+    if (!state || !state.pushOutResolvePending) return;
+
+    const resolver = room.players.find((p) => p.socketId === socket.id);
+    if (!resolver || resolver.playerIndex !== state.currentPlayerIndex) return;
+
+    state.pushOutResolvePending = false;
+
+    if (!accept) {
+      // Pass back: currentPlayerIndex flips back to the original shooter
+      state.currentPlayerIndex = state.currentPlayerIndex === 1 ? 2 : 1;
+      console.log(`[Socket] Room ${room.id}: player ${resolver.playerIndex} passed back turn`);
+    } else {
+      console.log(`[Socket] Room ${room.id}: player ${resolver.playerIndex} accepted turn`);
+    }
+
+    io.to(room.id).emit("push_out_resolved", {
+      gameState: gameManager.sanitizeGameState(state)
+    });
   });
 
   // ── LEAVE ROOM ───────────────────────────────────────────────────────────
@@ -288,7 +354,7 @@ function handlePlayerLeave(socket) {
  * Builds a TurnResult object from authoritative foul and position data.
  * (Mirrors the frontend rules logic, but server-authoritative.)
  */
-function buildTurnResult(foulData, positions) {
+function buildTurnResult(foulData, positions, isPushOutActive = false) {
   if (!foulData) {
     return {
       foul: null,
@@ -310,17 +376,28 @@ function buildTurnResult(foulData, positions) {
   const lowestRemaining =
     activeBalls.length > 0 ? Math.min(...activeBalls.map((b) => b.number)) : null;
 
-  // The "lowest ball before this turn" = lowest ball number not in pocketedThisTurn
-  // (since pocketedThisTurn contains balls pocketed THIS turn)
   const lowestBeforeTurn = pocketedThisTurn.length === 0
     ? lowestRemaining
     : Math.min(...[...activeBalls, ...pocketedThisTurn.map((n) => ({ number: n }))].map((b) => b.number));
 
-  // Foul checks
+  // Scratch is ALWAYS a foul, even in Push Out!
   if (cueBallPocketed) {
     return { foul: "scratch", ballsPocketed: pocketedThisTurn, won: false, switchTurn: true };
   }
 
+  if (isPushOutActive) {
+    // Push Out: ignore wrong ball and no cushion contact!
+    // giliran switches but no foul is assessed, and opponent has the option to pass it back
+    return {
+      foul: null,
+      ballsPocketed: pocketedThisTurn,
+      won: false,
+      switchTurn: true,
+      isPushOutResolve: true,
+    };
+  }
+
+  // Normal foul checks
   if (firstHitBall === null || (lowestBeforeTurn !== null && firstHitBall !== lowestBeforeTurn)) {
     return { foul: "wrong_ball", ballsPocketed: pocketedThisTurn, won: false, switchTurn: true };
   }
