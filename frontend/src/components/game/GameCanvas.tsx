@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { useGameEngine, TABLE_CONFIG, UseGameEngineReturn } from "@/hooks/useGameEngine";
+import { useSocket } from "@/hooks/useSocket";
 
 const CANVAS_WIDTH = TABLE_CONFIG.x * 2 + TABLE_CONFIG.width + 60; // extra for power meter
 const CANVAS_HEIGHT = TABLE_CONFIG.y * 2 + TABLE_CONFIG.height;
@@ -37,6 +38,8 @@ export default function GameCanvas({
     resetGame,
   } = activeEngine;
 
+  const { declarePushOut, resolvePushOut } = useSocket();
+
   // Keyboard shoot (Spacebar)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -49,6 +52,8 @@ export default function GameCanvas({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [handleShoot]);
 
+  const isMyTurn = !isMultiplayer || gameState.currentPlayer === myPlayerIndex;
+
   return (
     <div className="flex flex-col items-center gap-4 w-full select-none">
       {/* HUD Bar */}
@@ -59,6 +64,7 @@ export default function GameCanvas({
           isActive={gameState.currentPlayer === 1}
           score={gameState.scores.p1}
           name={playerNames?.p1 ? `${playerNames.p1}${myPlayerIndex === 1 ? " (You)" : ""}` : undefined}
+          consecutiveFouls={gameState.consecutiveFouls?.[1]}
         />
 
         {/* Center Info */}
@@ -69,11 +75,18 @@ export default function GameCanvas({
             </div>
           ) : (
             <>
-              <div className="text-white/60 text-xs uppercase tracking-widest">
-                {gameState.isSimulating ? (
-                  isMultiplayer ? "Syncing positions..." : "Simulating..."
-                ) : (
-                  `${gameState.currentPlayer === 1 ? (playerNames?.p1 || "Player 1") : (playerNames?.p2 || "Player 2")}'s Turn`
+              <div className="text-white/60 text-xs uppercase tracking-widest flex flex-col items-center gap-0.5">
+                <span>
+                  {gameState.isSimulating ? (
+                    isMultiplayer ? "Syncing positions..." : "Simulating..."
+                  ) : (
+                    `${gameState.currentPlayer === 1 ? (playerNames?.p1 || "Player 1") : (playerNames?.p2 || "Player 2")}'s Turn`
+                  )}
+                </span>
+                {isMultiplayer && gameState.isPushOutActive && (
+                  <span className="px-1.5 py-0.5 bg-cyan-500/20 border border-cyan-500/30 rounded text-cyan-400 text-[9px] uppercase font-bold tracking-wider animate-pulse mt-0.5">
+                    Push Out Active
+                  </span>
                 )}
               </div>
               {gameState.lowestBall && !gameState.isSimulating && (
@@ -91,22 +104,39 @@ export default function GameCanvas({
           isActive={gameState.currentPlayer === 2}
           score={gameState.scores.p2}
           name={playerNames?.p2 ? `${playerNames.p2}${myPlayerIndex === 2 ? " (You)" : ""}` : undefined}
+          consecutiveFouls={gameState.consecutiveFouls?.[2]}
         />
       </div>
 
-      {/* Foul / Ball In Hand Banner */}
-      {gameState.foulMessage && (
-        <div className="px-4 py-2 bg-red-500/20 border border-red-500/50 rounded-lg text-red-400 text-sm font-medium animate-fade-in">
-          ⚠️ {gameState.foulMessage}
-          {gameState.ballInHand && (
-            <span className="ml-2 text-yellow-400">
-              {isMultiplayer && gameState.currentPlayer !== myPlayerIndex
-                ? "Opponent is placing the ball."
-                : "Click table to place cue ball."}
-            </span>
-          )}
-        </div>
-      )}
+      {/* Foul / Ball In Hand / 2-Foul Warnings */}
+      <div className="flex flex-col gap-2 w-full items-center max-w-[840px]">
+        {gameState.foulMessage && (
+          <div className="px-4 py-2 bg-red-500/20 border border-red-500/50 rounded-lg text-red-400 text-sm font-medium animate-fade-in w-full text-center">
+            ⚠️ {gameState.foulMessage}
+            {gameState.ballInHand && (
+              <span className="ml-2 text-yellow-400">
+                {isMultiplayer && gameState.currentPlayer !== myPlayerIndex
+                  ? "Opponent is placing the ball."
+                  : "Click table to place cue ball."}
+              </span>
+            )}
+          </div>
+        )}
+
+        {isMultiplayer && !gameState.isSimulating && !gameState.winner && isMyTurn && (
+          (() => {
+            const myFouls = gameState.consecutiveFouls?.[myPlayerIndex || 1] || 0;
+            if (myFouls === 2) {
+              return (
+                <div className="px-4 py-2 bg-red-600/20 border border-red-500/40 rounded-lg text-red-400 text-xs font-bold animate-pulse w-full text-center">
+                  ⚠️ Warning: You have 2 consecutive fouls. A 3rd consecutive foul will forfeit the match!
+                </div>
+              );
+            }
+            return null;
+          })()
+        )}
+      </div>
 
       {/* Canvas */}
       <div className="relative rounded-xl overflow-hidden shadow-2xl shadow-black/60 ring-1 ring-white/10 animate-fade-in">
@@ -149,8 +179,8 @@ export default function GameCanvas({
       </div>
 
       {/* Controls */}
-      <div className="flex items-center gap-4 mt-1 animate-fade-in">
-        <div className="text-white/30 text-xs">
+      <div className="flex items-center justify-between w-full max-w-[840px] mt-1 px-2 animate-fade-in gap-4">
+        <div className="text-white/30 text-xs max-w-[50%] leading-relaxed">
           {gameState.isSimulating
             ? isMultiplayer ? "Waiting for sync consensus..." : "Waiting for balls to stop..."
             : gameState.ballInHand
@@ -159,25 +189,78 @@ export default function GameCanvas({
               : "Click on table to place cue ball"
             : isMultiplayer && gameState.currentPlayer !== myPlayerIndex
             ? `Waiting for ${gameState.currentPlayer === 1 ? (playerNames?.p1 || "Player 1") : (playerNames?.p2 || "Player 2")} to shoot...`
-            : "Drag mouse to aim & set power • Space / Release to shoot"}
+            : "Drag mouse to aim, scroll wheel to adjust power • Click Shoot or Space to fire"}
         </div>
-        {!isMultiplayer && (
-          <button
-            onClick={resetGame}
-            className="px-4 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-white/60 text-xs transition-colors"
-          >
-            ↺ Reset
-          </button>
-        )}
-        {isMultiplayer && onLeave && (
-          <button
-            onClick={onLeave}
-            className="px-4 py-1.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded-lg text-red-400 text-xs font-semibold transition-colors"
-          >
-            ← Leave Game
-          </button>
-        )}
+        
+        <div className="flex items-center gap-3">
+          {/* Declare Push Out button */}
+          {isMultiplayer && isMyTurn && gameState.pushOutAvailable && !gameState.isPushOutActive && !gameState.isSimulating && !gameState.winner && (
+            <button
+              onClick={declarePushOut}
+              className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-lg text-xs shadow-lg shadow-cyan-600/20 active:scale-95 duration-100 transition-all font-semibold"
+            >
+              🎯 Declare Push Out
+            </button>
+          )}
+
+          {/* Shoot Button */}
+          {isMyTurn && !gameState.isSimulating && !gameState.winner && !gameState.ballInHand && (
+            <button
+              onClick={handleShoot}
+              className="px-6 py-2 bg-yellow-500 hover:bg-yellow-400 text-slate-950 font-bold rounded-lg text-sm shadow-lg shadow-yellow-500/20 active:scale-95 duration-100 transition-all"
+            >
+              ⚡ Shoot
+            </button>
+          )}
+
+          {!isMultiplayer && (
+            <button
+              onClick={resetGame}
+              className="px-4 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-white/60 text-xs transition-colors"
+            >
+              ↺ Reset
+            </button>
+          )}
+          
+          {isMultiplayer && onLeave && (
+            <button
+              onClick={onLeave}
+              className="px-4 py-1.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded-lg text-red-400 text-xs font-semibold transition-colors"
+            >
+              ← Leave Game
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* Push Out Resolve Modal */}
+      {isMultiplayer && isMyTurn && gameState.pushOutResolvePending && !gameState.winner && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm animate-fade-in">
+          <div className="flex flex-col items-center gap-6 p-8 rounded-2xl border border-cyan-500/30 bg-slate-900 shadow-2xl shadow-cyan-500/10 text-center max-w-sm mx-4">
+            <div className="text-5xl">🎯</div>
+            <div className="flex flex-col gap-2">
+              <div className="text-cyan-400 text-2xl font-bold">Resolve Push Out</div>
+              <p className="text-white/60 text-xs leading-relaxed">
+                Your opponent declared a Push Out. You can accept the current position and play the shot, or pass the turn back to them.
+              </p>
+            </div>
+            <div className="flex flex-col gap-2 w-full">
+              <button
+                onClick={() => resolvePushOut(true)}
+                className="px-6 py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-xl transition-all active:scale-95 duration-100 text-sm font-semibold"
+              >
+                Accept & Play
+              </button>
+              <button
+                onClick={() => resolvePushOut(false)}
+                className="px-6 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 text-white font-bold rounded-xl transition-all active:scale-95 duration-100 text-sm font-semibold"
+              >
+                Pass Turn Back
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Win Modal */}
       {gameState.winner && (
@@ -199,11 +282,13 @@ function PlayerBadge({
   isActive,
   score,
   name,
+  consecutiveFouls = 0,
 }: {
   player: 1 | 2;
   isActive: boolean;
   score: number;
   name?: string;
+  consecutiveFouls?: number;
 }) {
   return (
     <div
@@ -218,6 +303,15 @@ function PlayerBadge({
         {name || `Player ${player}`}
       </div>
       <div className="text-white/30 text-xs">Score: {score}</div>
+      {consecutiveFouls > 0 && (
+        <div className={`text-[10px] font-semibold mt-1.5 px-1.5 py-0.5 rounded ${
+          consecutiveFouls >= 2
+            ? "bg-red-500/25 text-red-400 border border-red-500/30 animate-pulse"
+            : "bg-white/10 text-white/50 border border-white/5"
+        }`}>
+          {consecutiveFouls} {consecutiveFouls === 1 ? "Foul" : "Fouls"}
+        </div>
+      )}
     </div>
   );
 }
