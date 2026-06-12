@@ -181,12 +181,13 @@ export default function GameCanvas({
                 step="0.02"
                 value={aimState.power}
                 onChange={(e) => setPower(parseFloat(e.target.value))}
-                className="accent-yellow-500 cursor-pointer h-full"
+                className="accent-yellow-500 cursor-pointer"
                 style={{
                   writingMode: "vertical-lr",
                   direction: "rtl",
                   WebkitAppearance: "slider-vertical",
-                  width: "16px",
+                  height: "260px",
+                  width: "12px",
                 }}
               />
             </div>

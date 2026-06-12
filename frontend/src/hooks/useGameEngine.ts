@@ -911,15 +911,7 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
       const by = cueBallData.body.position.y;
       const angle = Math.atan2(pos.y - by, pos.x - bx);
 
-      setAimState((prev) => {
-        if (prev.isDragging) {
-          // Power based on drag distance from ball
-          const dist = Math.sqrt((pos.x - bx) ** 2 + (pos.y - by) ** 2);
-          const power = Math.max(0, Math.min(1, (dist - 30) / 150));
-          return { ...prev, angle, power };
-        }
-        return { ...prev, angle };
-      });
+      setAimState((prev) => ({ ...prev, angle }));
     },
     [getCueBall, getCanvasPos, gameState.winner, isMultiplayer, gameState.currentPlayer, myPlayerIndex]
   );

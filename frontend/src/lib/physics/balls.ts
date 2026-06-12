@@ -137,6 +137,10 @@ export function shootCueBall(
   angle: number,
   power: number
 ): void {
+  // Clear any residual drift velocity before shot to make direction 100% accurate
+  Matter.Body.setVelocity(cueBall, { x: 0, y: 0 });
+  Matter.Body.setAngularVelocity(cueBall, 0);
+
   const MAX_FORCE = 0.085;
   const force = power * MAX_FORCE;
   Matter.Body.applyForce(cueBall, cueBall.position, {
