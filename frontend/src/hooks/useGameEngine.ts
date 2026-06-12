@@ -105,6 +105,7 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
   const currentAngleRef = useRef<number>(0);
   const currentPowerRef = useRef<number>(0);
   const isDraggingRef = useRef<boolean>(false);
+  const firstBallHitThisTurnRef = useRef<number | null>(null);
 
   // Keep latest rendering/game callbacks in refs to avoid stale closures in requestAnimationFrame
   const drawSceneRef = useRef<any>(null);
@@ -198,26 +199,45 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
       event.pairs.forEach((pair) => {
         const { bodyA, bodyB } = pair;
 
-        // Detect cue ball first hit
-        const isCueBall = (b: Matter.Body) => b.label === "ball-0";
-        const isBall = (b: Matter.Body) => b.label.startsWith("ball-");
-        const isWall = (b: Matter.Body) => b.label.startsWith("wall");
+        const isCueBall = (b: Matter.Body) => b.label === "cue-ball";
+        const isTargetBall = (b: Matter.Body) => b.label.startsWith("target-ball-");
+        const isCushion = (b: Matter.Body) => b.label.startsWith("cushion");
 
-        if (isCueBall(bodyA) && isBall(bodyB) && !isCueBall(bodyB)) {
-          if (gameStateRef.current.firstHitBall === null) {
-            const num = parseInt(bodyB.label.split("-")[1]);
-            gameStateRef.current.firstHitBall = num;
+        // Action B (Strict Filter in Collision Event)
+        if (firstBallHitThisTurnRef.current === null) {
+          let hitBallNum: number | null = null;
+          if (isCueBall(bodyA) && isTargetBall(bodyB)) {
+            // Safe String Parsing
+            const rawNum = bodyB.label.replace("target-ball-", "");
+            const parsed = parseInt(rawNum, 10);
+            if (!isNaN(parsed)) {
+              hitBallNum = parsed;
+            }
+          } else if (isCueBall(bodyB) && isTargetBall(bodyA)) {
+            // Safe String Parsing
+            const rawNum = bodyA.label.replace("target-ball-", "");
+            const parsed = parseInt(rawNum, 10);
+            if (!isNaN(parsed)) {
+              hitBallNum = parsed;
+            }
           }
-        } else if (isCueBall(bodyB) && isBall(bodyA) && !isCueBall(bodyA)) {
-          if (gameStateRef.current.firstHitBall === null) {
-            const num = parseInt(bodyA.label.split("-")[1]);
-            gameStateRef.current.firstHitBall = num;
+
+          if (hitBallNum !== null) {
+            firstBallHitThisTurnRef.current = hitBallNum;
+            gameStateRef.current.firstHitBall = hitBallNum;
+
+            // Compare the hit number with the true lowest remaining target ball in ballsRef.current
+            const activeRemaining = ballsRef.current.filter((b) => b.number > 0 && !b.isPocketed);
+            const trueMin = activeRemaining.length > 0 ? Math.min(...activeRemaining.map((b) => b.number)) : null;
+
+            console.log(`[Collision] Cue ball hit ball-${hitBallNum} first. True lowest remaining target: ${trueMin}. Legal hit: ${hitBallNum === trueMin}`);
           }
         }
 
-        // Detect rail contact (any ball hits wall after shot)
-        if ((isBall(bodyA) && isWall(bodyB)) || (isBall(bodyB) && isWall(bodyA))) {
-          if (gameStateRef.current.isRunning) {
+        // Cushion Rule Timing: rail/cushion contact only validates if it happens AFTER a legal ball hit (firstBallHitThisTurnRef.current !== null)
+        const isAnyBall = (b: Matter.Body) => isCueBall(b) || isTargetBall(b);
+        if ((isAnyBall(bodyA) && isCushion(bodyB)) || (isAnyBall(bodyB) && isCushion(bodyA))) {
+          if (gameStateRef.current.isRunning && firstBallHitThisTurnRef.current !== null) {
             gameStateRef.current.railContactMade = true;
           }
         }
@@ -439,7 +459,7 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
     
     const cushions = [
       {
-        label: "wall-top-left",
+        label: "cushion-top-left",
         pts: [
           { x: x + 35, y: y - 24 },
           { x: x + width/2 - 25, y: y - 24 },
@@ -448,7 +468,7 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
         ]
       },
       {
-        label: "wall-top-right",
+        label: "cushion-top-right",
         pts: [
           { x: x + width/2 + 25, y: y - 24 },
           { x: x + width - 35, y: y - 24 },
@@ -457,7 +477,7 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
         ]
       },
       {
-        label: "wall-bottom-left",
+        label: "cushion-bottom-left",
         pts: [
           { x: x + 35, y: y + height + 24 },
           { x: x + width/2 - 25, y: y + height + 24 },
@@ -466,7 +486,7 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
         ]
       },
       {
-        label: "wall-bottom-right",
+        label: "cushion-bottom-right",
         pts: [
           { x: x + width/2 + 25, y: y + height + 24 },
           { x: x + width - 35, y: y + height + 24 },
@@ -475,7 +495,7 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
         ]
       },
       {
-        label: "wall-left",
+        label: "cushion-left",
         pts: [
           { x: x - 24, y: y + 35 },
           { x: x - 24, y: y + height - 35 },
@@ -484,7 +504,7 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
         ]
       },
       {
-        label: "wall-right",
+        label: "cushion-right",
         pts: [
           { x: x + width + 24, y: y + 35 },
           { x: x + width + 24, y: y + height - 35 },
@@ -496,11 +516,11 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
 
     cushions.forEach((c) => {
       let grad;
-      if (c.label.startsWith("wall-top")) {
+      if (c.label.startsWith("cushion-top")) {
         grad = ctx.createLinearGradient(0, y - 24, 0, y);
-      } else if (c.label.startsWith("wall-bottom")) {
+      } else if (c.label.startsWith("cushion-bottom")) {
         grad = ctx.createLinearGradient(0, y + height + 24, 0, y + height);
-      } else if (c.label === "wall-left") {
+      } else if (c.label === "cushion-left") {
         grad = ctx.createLinearGradient(x - 24, 0, x, 0);
       } else {
         grad = ctx.createLinearGradient(x + width + 24, 0, x + width, 0);
@@ -537,7 +557,7 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
     if (physicsRef.current) {
       const bodies = physicsRef.current.world.bodies;
       bodies.forEach((body) => {
-        if (body.label === "wall-bumper") {
+        if (body.label === "cushion-bumper") {
           ctx.beginPath();
           ctx.arc(body.position.x, body.position.y, body.circleRadius || 7, 0, Math.PI * 2);
           ctx.fill();
@@ -859,6 +879,7 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
     }
 
     // Reset turn tracking
+    firstBallHitThisTurnRef.current = null;
     Object.assign(gameStateRef.current, resetTurnState(gameStateRef.current));
     gameStateRef.current.activeBalls = ballsRef.current.filter(
       (b) => !b.isPocketed
@@ -899,6 +920,7 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
       });
     }
 
+    firstBallHitThisTurnRef.current = null;
     Object.assign(gameStateRef.current, {
       firstHitBall: null,
       railContactMade: false,
@@ -1043,6 +1065,7 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
     const cueBallData = getCueBall();
     if (!cueBallData) return;
 
+    firstBallHitThisTurnRef.current = null;
     Object.assign(gameStateRef.current, {
       firstHitBall: null,
       railContactMade: false,
@@ -1123,6 +1146,7 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
       pushOutResolvePending: nextSocketState.pushOutResolvePending,
     }));
 
+    firstBallHitThisTurnRef.current = null;
     Object.assign(gameStateRef.current, resetTurnState(gameStateRef.current));
     gameStateRef.current.activeBalls = ballsRef.current.filter((b) => !b.isPocketed);
     gameStateRef.current.isRunning = false;

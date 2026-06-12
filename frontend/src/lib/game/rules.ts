@@ -3,6 +3,7 @@ import { BallData } from "@/lib/physics/balls";
 export type FoulReason =
   | "scratch"           // cue ball pocketed
   | "wrong_ball"        // cue ball hit wrong ball first
+  | "no_ball_hit"       // cue ball didn't hit any ball
   | "no_rail_contact"   // no ball touched a cushion after hit (competitive rule)
   | null;
 
@@ -72,7 +73,7 @@ export function evaluateTurn(state: GameState): TurnResult {
   // 3. No legal hit at all
   if (firstHitBall === null) {
     return {
-      foul: "wrong_ball",
+      foul: "no_ball_hit",
       ballsPocketed: pocketedThisTurn,
       won: false,
       switchTurn: true,
@@ -134,6 +135,8 @@ export function getFoulMessage(foul: FoulReason): string {
       return "Scratch! Cue ball pocketed. Ball in hand!";
     case "wrong_ball":
       return "Foul! Wrong ball hit. Ball in hand!";
+    case "no_ball_hit":
+      return "Foul! No ball was hit. Ball in hand!";
     case "no_rail_contact":
       return "Foul! No rail contact after hit. Ball in hand!";
     default:

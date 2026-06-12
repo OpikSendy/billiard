@@ -2,8 +2,8 @@ import Matter from "matter-js";
 
 export const BALL_RADIUS = 11;
 export const BALL_FRICTION = 0.008;       // rolling friction on table
-export const BALL_RESTITUTION = 0.85;     // bounciness between balls
-export const BALL_FRICTION_AIR = 0.013;   // air drag (simulates table cloth)
+export const BALL_RESTITUTION = 0.9;      // bounciness between balls
+export const BALL_FRICTION_AIR = 0.018;   // air drag (simulates table cloth)
 
 // 9-ball color palette
 export const BALL_COLORS: Record<number, { fill: string; stripe?: string }> = {
@@ -43,7 +43,7 @@ const ballPhysicsOptions: Matter.IBodyDefinition = {
 export function createBall(x: number, y: number, number: number): BallData {
   const body = Matter.Bodies.circle(x, y, BALL_RADIUS, {
     ...ballPhysicsOptions,
-    label: `ball-${number}`,
+    label: `target-ball-${number}`,
   });
 
   return { body, number, isPocketed: false };
@@ -55,7 +55,7 @@ export function createBall(x: number, y: number, number: number): BallData {
 export function createCueBall(x: number, y: number): BallData {
   const body = Matter.Bodies.circle(x, y, BALL_RADIUS, {
     ...ballPhysicsOptions,
-    label: "ball-0",
+    label: "cue-ball",
     frictionAir: BALL_FRICTION_AIR,
   });
   return { body, number: 0, isPocketed: false };

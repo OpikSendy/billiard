@@ -16,7 +16,7 @@ export interface Pocket {
 // Wall thickness
 const WALL_THICKNESS = 30;
 // Cushion restitution (bounciness) and friction
-const CUSHION_RESTITUTION = 0.75;
+const CUSHION_RESTITUTION = 0.8;
 const CUSHION_FRICTION = 0.0;
 
 /**
@@ -31,7 +31,7 @@ export function createTableWalls(config: TableConfig): Matter.Body[] {
     restitution: CUSHION_RESTITUTION,
     friction: CUSHION_FRICTION,
     frictionStatic: 0,
-    label: "wall",
+    label: "cushion",
     collisionFilter: { category: 0x0002, mask: 0x0001 },
   };
 
@@ -45,14 +45,14 @@ export function createTableWalls(config: TableConfig): Matter.Body[] {
   bodies.push(Matter.Bodies.rectangle(
     x + 35 + topSegLength / 2, topY,
     topSegLength, WALL_THICKNESS,
-    { ...wallOptions, label: "wall-top-left" }
+    { ...wallOptions, label: "cushion-top-left" }
   ));
   
   // Top-Right cushion
   bodies.push(Matter.Bodies.rectangle(
     x + width / 2 + 25 + topSegLength / 2, topY,
     topSegLength, WALL_THICKNESS,
-    { ...wallOptions, label: "wall-top-right" }
+    { ...wallOptions, label: "cushion-top-right" }
   ));
 
   // Split Bottom wall: Left & Right segments
@@ -61,13 +61,13 @@ export function createTableWalls(config: TableConfig): Matter.Body[] {
   bodies.push(Matter.Bodies.rectangle(
     x + 35 + topSegLength / 2, botY,
     topSegLength, WALL_THICKNESS,
-    { ...wallOptions, label: "wall-bottom-left" }
+    { ...wallOptions, label: "cushion-bottom-left" }
   ));
   // Bottom-Right cushion
   bodies.push(Matter.Bodies.rectangle(
     x + width / 2 + 25 + topSegLength / 2, botY,
     topSegLength, WALL_THICKNESS,
-    { ...wallOptions, label: "wall-bottom-right" }
+    { ...wallOptions, label: "cushion-bottom-right" }
   ));
 
   // Left cushion
@@ -76,7 +76,7 @@ export function createTableWalls(config: TableConfig): Matter.Body[] {
   bodies.push(Matter.Bodies.rectangle(
     leftX, y + 35 + sideSegLength / 2,
     WALL_THICKNESS, sideSegLength,
-    { ...wallOptions, label: "wall-left" }
+    { ...wallOptions, label: "cushion-left" }
   ));
 
   // Right cushion
@@ -84,14 +84,14 @@ export function createTableWalls(config: TableConfig): Matter.Body[] {
   bodies.push(Matter.Bodies.rectangle(
     rightX, y + 35 + sideSegLength / 2,
     WALL_THICKNESS, sideSegLength,
-    { ...wallOptions, label: "wall-right" }
+    { ...wallOptions, label: "cushion-right" }
   ));
 
   // Rounded bumper circles at the ends of the cushions to act as realistic pocket inlets
   const bumperRadius = 7;
   const bumperOptions = {
     ...wallOptions,
-    label: "wall-bumper",
+    label: "cushion-bumper",
   };
 
   const bumpers = [
