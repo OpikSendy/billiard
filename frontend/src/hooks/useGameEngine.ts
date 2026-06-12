@@ -6,6 +6,7 @@ import { createPhysicsEngine, startEngine, stopEngine, allBallsStopped, PhysicsE
 import { createTableWalls, getTablePockets, checkPocketed, TableConfig, Pocket } from "@/lib/physics/table";
 import { createCueBall, createRackedBalls, shootCueBall, BallData, BALL_RADIUS } from "@/lib/physics/balls";
 import { getLowestBall, evaluateTurn, resetTurnState, getFoulMessage, GameState, TurnResult } from "@/lib/game/rules";
+import { GameStateInfo, ShotData, BallPos, FoulData, TurnResult as SocketTurnResult } from "@/hooks/useSocket";
 
 export interface AimState {
   angle: number;       // radians
@@ -22,6 +23,25 @@ export interface GameHookState {
   lowestBall: number | null;
   pocketedBalls: number[];
   ballInHand: boolean;
+}
+
+export interface UseGameEngineProps {
+  isMultiplayer?: boolean;
+  myPlayerIndex?: 1 | 2 | null;
+  socketGameState?: GameStateInfo | null;
+  lastOpponentShot?: (ShotData & { shooterIndex: 1 | 2 }) | null;
+  lastTurnResult?: {
+    gameState: GameStateInfo;
+    turnResult: SocketTurnResult;
+    authPositions: BallPos[];
+    desynced: boolean;
+  } | null;
+  gameOver?: { winner: string; gameState: GameStateInfo } | null;
+  opponentLeft?: boolean;
+  onEmitShot?: (shot: ShotData) => void;
+  onEmitSyncResult?: (positions: BallPos[], foulData: FoulData) => void;
+  onClearOpponentShot?: () => void;
+  onClearTurnResult?: () => void;
 }
 
 export interface UseGameEngineReturn {
@@ -55,7 +75,21 @@ const RACK_START = {
   y: TABLE_CONFIG.y + TABLE_CONFIG.height / 2,
 };
 
-export function useGameEngine(): UseGameEngineReturn {
+export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineReturn {
+  const {
+    isMultiplayer = false,
+    myPlayerIndex = null,
+    socketGameState = null,
+    lastOpponentShot = null,
+    lastTurnResult = null,
+    gameOver = null,
+    opponentLeft = false,
+    onEmitShot,
+    onEmitSyncResult,
+    onClearOpponentShot,
+    onClearTurnResult,
+  } = props;
+
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const physicsRef = useRef<PhysicsEngine | null>(null);
   const ballsRef = useRef<BallData[]>([]);
@@ -502,6 +536,29 @@ export function useGameEngine(): UseGameEngineReturn {
     if (!gameStateRef.current.isRunning) return;
     gameStateRef.current.isRunning = false;
 
+    if (isMultiplayer) {
+      // In multiplayer: collect final positions and emit for consensus validation
+      const positions: BallPos[] = ballsRef.current.map((b) => ({
+        number: b.number,
+        x: b.body.position.x,
+        y: b.body.position.y,
+        isPocketed: b.isPocketed,
+      }));
+
+      const foulData: FoulData = {
+        cueBallPocketed: gameStateRef.current.cueBallPocketed,
+        firstHitBall: gameStateRef.current.firstHitBall,
+        railContactMade: gameStateRef.current.railContactMade,
+        pocketedThisTurn: [...gameStateRef.current.pocketedThisTurn],
+        foul: null,
+      };
+
+      if (onEmitSyncResult) {
+        onEmitSyncResult(positions, foulData);
+      }
+      return;
+    }
+
     const result: TurnResult = evaluateTurn(gameStateRef.current);
 
     setGameState((prev) => {
@@ -549,7 +606,7 @@ export function useGameEngine(): UseGameEngineReturn {
       (b) => !b.isPocketed
     );
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [getCueBall]);
+  }, [getCueBall, isMultiplayer, onEmitSyncResult]);
 
   // ─── Mouse / Input Handlers ───────────────────────────────────────────────
 
@@ -557,6 +614,9 @@ export function useGameEngine(): UseGameEngineReturn {
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       if (gameStateRef.current.isRunning) return;
       if (gameState.winner) return;
+
+      // In multiplayer, check if it's our turn
+      if (isMultiplayer && gameState.currentPlayer !== myPlayerIndex) return;
 
       const cueBallData = getCueBall();
       if (!cueBallData || cueBallData.isPocketed) return;
@@ -576,17 +636,21 @@ export function useGameEngine(): UseGameEngineReturn {
         return { ...prev, angle };
       });
     },
-    [getCueBall, getCanvasPos, gameState.winner]
+    [getCueBall, getCanvasPos, gameState.winner, isMultiplayer, gameState.currentPlayer, myPlayerIndex]
   );
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       if (gameStateRef.current.isRunning || gameState.winner) return;
+
+      // In multiplayer, check if it's our turn
+      if (isMultiplayer && gameState.currentPlayer !== myPlayerIndex) return;
+
       if (e.button === 0) {
         setAimState((prev) => ({ ...prev, isDragging: true, power: 0 }));
       }
     },
-    [gameState.winner]
+    [gameState.winner, isMultiplayer, gameState.currentPlayer, myPlayerIndex]
   );
 
   const handleMouseUp = useCallback(
@@ -595,17 +659,24 @@ export function useGameEngine(): UseGameEngineReturn {
       const wasDragging = aimState.isDragging;
       setAimState((prev) => ({ ...prev, isDragging: false }));
 
+      // In multiplayer, check if it's our turn
+      if (isMultiplayer && gameState.currentPlayer !== myPlayerIndex) return;
+
       if (wasDragging && aimState.power > 0.02 && !gameState.ballInHand) {
         handleShoot();
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [aimState]
+    [aimState, isMultiplayer, gameState.currentPlayer, myPlayerIndex, handleShoot, gameState.ballInHand]
   );
 
   const handleCanvasClick = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       if (!gameState.ballInHand) return;
+
+      // In multiplayer, check if it's our turn
+      if (isMultiplayer && gameState.currentPlayer !== myPlayerIndex) return;
+
       const pos = getCanvasPos(e);
       const { x, y, width, height } = TABLE_CONFIG;
       // Clamp within table bounds
@@ -613,7 +684,7 @@ export function useGameEngine(): UseGameEngineReturn {
       const cy = Math.max(y + BALL_RADIUS + 5, Math.min(y + height - BALL_RADIUS - 5, pos.y));
       placeCueBall(cx, cy);
     },
-    [gameState.ballInHand, getCanvasPos]
+    [gameState.ballInHand, getCanvasPos, isMultiplayer, gameState.currentPlayer, myPlayerIndex, placeCueBall]
   );
 
   const handleShoot = useCallback(() => {
@@ -621,6 +692,20 @@ export function useGameEngine(): UseGameEngineReturn {
     if (gameState.winner) return;
     const cueBallData = getCueBall();
     if (!cueBallData || cueBallData.isPocketed) return;
+
+    // In multiplayer, check if it's our turn
+    if (isMultiplayer && gameState.currentPlayer !== myPlayerIndex) return;
+
+    if (isMultiplayer && onEmitShot) {
+      onEmitShot({
+        angle: aimState.angle,
+        power: aimState.power > 0 ? aimState.power : 0.3,
+        cueBallPos: {
+          x: cueBallData.body.position.x,
+          y: cueBallData.body.position.y,
+        },
+      });
+    }
 
     Object.assign(gameStateRef.current, {
       firstHitBall: null,
@@ -633,7 +718,7 @@ export function useGameEngine(): UseGameEngineReturn {
     shootCueBall(cueBallData.body, aimState.angle, aimState.power > 0 ? aimState.power : 0.3);
     setAimState((prev) => ({ ...prev, power: 0, isDragging: false }));
     setGameState((prev) => ({ ...prev, isSimulating: true, foulMessage: "" }));
-  }, [aimState, getCueBall, gameState.winner]);
+  }, [aimState, getCueBall, gameState.winner, isMultiplayer, myPlayerIndex, gameState.currentPlayer, onEmitShot]);
 
   const placeCueBall = useCallback((x: number, y: number) => {
     const cueBallData = getCueBall();
@@ -647,6 +732,131 @@ export function useGameEngine(): UseGameEngineReturn {
   const resetGame = useCallback(() => {
     initGame();
   }, [initGame]);
+
+  // ─── Multiplayer Socket Effects ───────────────────────────────────────────
+
+  // Sync initial game state from socket when it becomes available
+  useEffect(() => {
+    if (!isMultiplayer || !socketGameState) return;
+
+    setGameState((prev) => ({
+      ...prev,
+      currentPlayer: socketGameState.currentPlayerIndex,
+      pocketedBalls: socketGameState.pocketedBalls,
+      ballInHand: socketGameState.currentPlayerIndex === myPlayerIndex ? socketGameState.ballInHand : false,
+      winner: socketGameState.winner,
+    }));
+  }, [isMultiplayer, socketGameState, myPlayerIndex]);
+
+  // React to opponent's shot from server
+  useEffect(() => {
+    if (!isMultiplayer || !lastOpponentShot) return;
+    if (lastOpponentShot.shooterIndex === myPlayerIndex) {
+      if (onClearOpponentShot) {
+        onClearOpponentShot();
+      }
+      return;
+    }
+
+    const cueBallData = getCueBall();
+    if (!cueBallData) return;
+
+    Object.assign(gameStateRef.current, {
+      firstHitBall: null,
+      railContactMade: false,
+      pocketedThisTurn: [],
+      cueBallPocketed: false,
+      isRunning: true,
+    });
+
+    // Sync cue ball placement chosen by opponent
+    cueBallData.isPocketed = false;
+    Matter.Body.setPosition(cueBallData.body, lastOpponentShot.cueBallPos);
+    Matter.Body.setVelocity(cueBallData.body, { x: 0, y: 0 });
+
+    shootCueBall(cueBallData.body, lastOpponentShot.angle, lastOpponentShot.power);
+
+    setGameState((prev) => ({
+      ...prev,
+      isSimulating: true,
+      foulMessage: "",
+    }));
+
+    if (onClearOpponentShot) {
+      onClearOpponentShot();
+    }
+  }, [isMultiplayer, lastOpponentShot, myPlayerIndex, getCueBall, onClearOpponentShot]);
+
+  // React to turn result from server (authoritative sync)
+  useEffect(() => {
+    if (!isMultiplayer || !lastTurnResult) return;
+
+    const { gameState: nextSocketState, turnResult, authPositions } = lastTurnResult;
+
+    // Sync positions
+    ballsRef.current.forEach((ball) => {
+      const authBall = authPositions.find((b) => b.number === ball.number);
+      if (authBall) {
+        ball.isPocketed = authBall.isPocketed;
+        
+        Matter.Body.setVelocity(ball.body, { x: 0, y: 0 });
+        Matter.Body.setAngularVelocity(ball.body, 0);
+
+        if (authBall.isPocketed) {
+          if (ball.number === 0) {
+            Matter.Body.setPosition(ball.body, { x: -1000, y: -1000 });
+          } else {
+            Matter.Body.setPosition(ball.body, { x: -2000, y: -1000 });
+          }
+        } else {
+          Matter.Body.setPosition(ball.body, { x: authBall.x, y: authBall.y });
+        }
+      }
+    });
+
+    // Spawn cue ball if scratch and it is our turn
+    if (turnResult.foul === "scratch") {
+      const cueBall = getCueBall();
+      if (cueBall) {
+        if (nextSocketState.currentPlayerIndex === myPlayerIndex && nextSocketState.ballInHand) {
+          cueBall.isPocketed = false;
+          Matter.Body.setPosition(cueBall.body, CUE_BALL_START);
+          Matter.Body.setVelocity(cueBall.body, { x: 0, y: 0 });
+        }
+      }
+    }
+
+    setGameState((prev) => ({
+      ...prev,
+      isSimulating: false,
+      currentPlayer: nextSocketState.currentPlayerIndex,
+      foulMessage: turnResult.foul ? getFoulMessage(turnResult.foul as any) : "",
+      winner: nextSocketState.winner,
+      pocketedBalls: nextSocketState.pocketedBalls,
+      ballInHand: nextSocketState.currentPlayerIndex === myPlayerIndex ? nextSocketState.ballInHand : false,
+      lowestBall: getLowestBall(ballsRef.current),
+    }));
+
+    Object.assign(gameStateRef.current, resetTurnState(gameStateRef.current));
+    gameStateRef.current.activeBalls = ballsRef.current.filter((b) => !b.isPocketed);
+    gameStateRef.current.isRunning = false;
+
+    if (onClearTurnResult) {
+      onClearTurnResult();
+    }
+  }, [isMultiplayer, lastTurnResult, myPlayerIndex, getCueBall, onClearTurnResult]);
+
+  // React to game over from server
+  useEffect(() => {
+    if (!isMultiplayer || !gameOver) return;
+
+    setGameState((prev) => ({
+      ...prev,
+      isSimulating: false,
+      winner: gameOver.winner,
+      pocketedBalls: gameOver.gameState.pocketedBalls,
+    }));
+  }, [isMultiplayer, gameOver]);
 
   // ─── Lifecycle ────────────────────────────────────────────────────────────
 
