@@ -275,11 +275,14 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
 
       const cueBallData = getCueBall();
       if (cueBallData && !cueBallData.isPocketed && !gameStateRef.current.isRunning) {
-        drawCueStick(ctx, cueBallData.body.position, aimState);
-        drawPowerMeter(ctx, aimState.power);
+        const isMyTurn = !isMultiplayer || (gameState.currentPlayer === myPlayerIndex);
+        if (isMyTurn) {
+          drawCueStick(ctx, cueBallData.body.position, aimState);
+          drawPowerMeter(ctx, aimState.power);
+        }
       }
     },
-    [aimState, getCueBall]
+    [aimState, getCueBall, isMultiplayer, myPlayerIndex, gameState.currentPlayer]
   );
 
   const drawTable = (ctx: CanvasRenderingContext2D) => {
