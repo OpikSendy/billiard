@@ -86,17 +86,17 @@ export function createRackedBalls(
   const rowOffset = gap * Math.sin(Math.PI / 3); // ~√3/2 * gap
 
   // Diamond positions relative to rack tip
-  // 5-row diamond: tip at top, going down
+  // Facing left (towards the cue ball), centered vertically
   const positions: [number, number][] = [
     [0, 0],                                    // row 1 - tip (ball 1)
-    [-gap / 2, rowOffset],                     // row 2
-    [gap / 2, rowOffset],
-    [-gap, rowOffset * 2],                     // row 3 (9 in center)
-    [0, rowOffset * 2],                        // center = ball 9
-    [gap, rowOffset * 2],
-    [-gap / 2, rowOffset * 3],                 // row 4
-    [gap / 2, rowOffset * 3],
-    [0, rowOffset * 4],                        // row 5 - back
+    [rowOffset, -gap / 2],                     // row 2
+    [rowOffset, gap / 2],
+    [rowOffset * 2, -gap],                     // row 3
+    [rowOffset * 2, 0],                        // center = ball 9
+    [rowOffset * 2, gap],
+    [rowOffset * 3, -gap / 2],                 // row 4
+    [rowOffset * 3, gap / 2],
+    [rowOffset * 4, 0],                        // row 5 - back
   ];
 
   // Fixed positions: 1 at tip (index 0), 9 at center (index 4)

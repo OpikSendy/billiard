@@ -59,6 +59,7 @@ export interface UseGameEngineReturn {
   handleShoot: () => void;
   resetGame: () => void;
   placeCueBall: (x: number, y: number) => void;
+  setPower: (power: number) => void;
 }
 
 // Table layout constants
@@ -375,25 +376,32 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
   const drawTable = (ctx: CanvasRenderingContext2D) => {
     const { x, y, width, height } = TABLE_CONFIG;
 
-    // Outer frame (wood)
-    ctx.fillStyle = "#7C4A1A";
+    // Outer frame (rich dark wood)
+    ctx.save();
+    ctx.fillStyle = "#4a2406";
+    ctx.shadowColor = "rgba(0,0,0,0.6)";
+    ctx.shadowBlur = 12;
     ctx.beginPath();
-    ctx.roundRect(x - 30, y - 30, width + 60, height + 60, 10);
+    ctx.roundRect(x - 32, y - 32, width + 64, height + 64, 12);
     ctx.fill();
+    ctx.shadowBlur = 0;
+    
+    ctx.strokeStyle = "#271101";
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.restore();
 
-    // Rail cushions
-    ctx.fillStyle = "#15803d";
-    ctx.beginPath();
-    ctx.roundRect(x - 18, y - 18, width + 36, height + 36, 6);
-    ctx.fill();
-
-    // Felt (playing surface)
-    const feltGrad = ctx.createLinearGradient(x, y, x + width, y + height);
-    feltGrad.addColorStop(0, "#166534");
+    // Felt (playing surface including cushion base)
+    ctx.save();
+    const feltGrad = ctx.createLinearGradient(x - 25, y - 25, x + width + 25, y + height + 25);
+    feltGrad.addColorStop(0, "#0f5a34");
     feltGrad.addColorStop(0.5, "#15803d");
-    feltGrad.addColorStop(1, "#166534");
+    feltGrad.addColorStop(1, "#0f5a34");
     ctx.fillStyle = feltGrad;
-    ctx.fillRect(x, y, width, height);
+    ctx.beginPath();
+    ctx.roundRect(x - 26, y - 26, width + 52, height + 52, 8);
+    ctx.fill();
+    ctx.restore();
 
     // Center line (subtle)
     ctx.strokeStyle = "rgba(255,255,255,0.07)";
@@ -412,6 +420,120 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
     ctx.moveTo(x + width * 0.25, y);
     ctx.lineTo(x + width * 0.25, y + height);
     ctx.stroke();
+
+    // Draw split slanted cushions
+    ctx.save();
+    
+    const cushions = [
+      {
+        label: "wall-top-left",
+        pts: [
+          { x: x + 35, y: y - 24 },
+          { x: x + width/2 - 25, y: y - 24 },
+          { x: x + width/2 - 25 - 12, y: y },
+          { x: x + 35 + 18, y: y }
+        ]
+      },
+      {
+        label: "wall-top-right",
+        pts: [
+          { x: x + width/2 + 25, y: y - 24 },
+          { x: x + width - 35, y: y - 24 },
+          { x: x + width - 35 - 18, y: y },
+          { x: x + width/2 + 25 + 12, y: y }
+        ]
+      },
+      {
+        label: "wall-bottom-left",
+        pts: [
+          { x: x + 35, y: y + height + 24 },
+          { x: x + width/2 - 25, y: y + height + 24 },
+          { x: x + width/2 - 25 - 12, y: y + height },
+          { x: x + 35 + 18, y: y + height }
+        ]
+      },
+      {
+        label: "wall-bottom-right",
+        pts: [
+          { x: x + width/2 + 25, y: y + height + 24 },
+          { x: x + width - 35, y: y + height + 24 },
+          { x: x + width - 35 - 18, y: y + height },
+          { x: x + width/2 + 25 + 12, y: y + height }
+        ]
+      },
+      {
+        label: "wall-left",
+        pts: [
+          { x: x - 24, y: y + 35 },
+          { x: x - 24, y: y + height - 35 },
+          { x: x, y: y + height - 35 - 18 },
+          { x: x, y: y + 35 + 18 }
+        ]
+      },
+      {
+        label: "wall-right",
+        pts: [
+          { x: x + width + 24, y: y + 35 },
+          { x: x + width + 24, y: y + height - 35 },
+          { x: x + width, y: y + height - 35 - 18 },
+          { x: x + width, y: y + 35 + 18 }
+        ]
+      }
+    ];
+
+    cushions.forEach((c) => {
+      let grad;
+      if (c.label.startsWith("wall-top")) {
+        grad = ctx.createLinearGradient(0, y - 24, 0, y);
+      } else if (c.label.startsWith("wall-bottom")) {
+        grad = ctx.createLinearGradient(0, y + height + 24, 0, y + height);
+      } else if (c.label === "wall-left") {
+        grad = ctx.createLinearGradient(x - 24, 0, x, 0);
+      } else {
+        grad = ctx.createLinearGradient(x + width + 24, 0, x + width, 0);
+      }
+      
+      grad.addColorStop(0, "#14532d");
+      grad.addColorStop(0.3, "#166534");
+      grad.addColorStop(1, "#15803d");
+
+      ctx.fillStyle = grad;
+      ctx.strokeStyle = "#0f3e22";
+      ctx.lineWidth = 1;
+      
+      ctx.beginPath();
+      ctx.moveTo(c.pts[0].x, c.pts[0].y);
+      for (let i = 1; i < c.pts.length; i++) {
+        ctx.lineTo(c.pts[i].x, c.pts[i].y);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(c.pts[3].x, c.pts[3].y);
+      ctx.lineTo(c.pts[2].x, c.pts[2].y);
+      ctx.stroke();
+    });
+
+    ctx.fillStyle = "#15803d";
+    ctx.strokeStyle = "#14532d";
+    ctx.lineWidth = 1;
+    if (physicsRef.current) {
+      const bodies = physicsRef.current.world.bodies;
+      bodies.forEach((body) => {
+        if (body.label === "wall-bumper") {
+          ctx.beginPath();
+          ctx.arc(body.position.x, body.position.y, body.circleRadius || 7, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        }
+      });
+    }
+
+    ctx.restore();
   };
 
   const drawPockets = (ctx: CanvasRenderingContext2D) => {
@@ -845,6 +967,13 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
     initGame();
   }, [initGame]);
 
+  const setPower = useCallback((power: number) => {
+    setAimState((prev) => ({
+      ...prev,
+      power: Math.max(0, Math.min(1, power)),
+    }));
+  }, []);
+
   // ─── Multiplayer Socket Effects ───────────────────────────────────────────
 
   // Sync initial game state from socket when it becomes available
@@ -1027,6 +1156,7 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
     handleShoot,
     resetGame,
     placeCueBall,
+    setPower,
   };
 }
 

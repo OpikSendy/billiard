@@ -36,6 +36,7 @@ export default function GameCanvas({
     handleCanvasClick,
     handleShoot,
     resetGame,
+    setPower,
   } = activeEngine;
 
   const { declarePushOut, resolvePushOut } = useSocket();
@@ -138,31 +139,64 @@ export default function GameCanvas({
         )}
       </div>
 
-      {/* Canvas */}
-      <div className="relative rounded-xl overflow-hidden shadow-2xl shadow-black/60 ring-1 ring-white/10 animate-fade-in">
-        <canvas
-          ref={canvasRef}
-          width={CANVAS_WIDTH}
-          height={CANVAS_HEIGHT}
-          className="block"
-          style={{
-            cursor: gameState.ballInHand && (!isMultiplayer || gameState.currentPlayer === myPlayerIndex)
-              ? "crosshair"
-              : gameState.isSimulating
-              ? "not-allowed"
-              : isMultiplayer && gameState.currentPlayer !== myPlayerIndex
-              ? "not-allowed"
-              : "none",
-          }}
-          onMouseMove={handleMouseMove}
-          onMouseDown={handleMouseDown}
-          onMouseUp={handleMouseUp}
-          onClick={handleCanvasClick}
-        />
+      {/* Canvas & Power Slider Container */}
+      <div className="flex items-center gap-4 animate-fade-in">
+        <div className="relative rounded-xl overflow-hidden shadow-2xl shadow-black/60 ring-1 ring-white/10">
+          <canvas
+            ref={canvasRef}
+            width={CANVAS_WIDTH}
+            height={CANVAS_HEIGHT}
+            className="block"
+            style={{
+              cursor: gameState.ballInHand && (!isMultiplayer || gameState.currentPlayer === myPlayerIndex)
+                ? "crosshair"
+                : gameState.isSimulating
+                ? "not-allowed"
+                : isMultiplayer && gameState.currentPlayer !== myPlayerIndex
+                ? "not-allowed"
+                : "default",
+            }}
+            onMouseMove={handleMouseMove}
+            onMouseDown={handleMouseDown}
+            onMouseUp={handleMouseUp}
+            onClick={handleCanvasClick}
+          />
 
-        {/* Ball-in-hand overlay */}
-        {gameState.ballInHand && (!isMultiplayer || gameState.currentPlayer === myPlayerIndex) && (
-          <div className="absolute inset-0 pointer-events-none border-2 border-yellow-400/40 rounded-xl animate-pulse" />
+          {/* Ball-in-hand overlay */}
+          {gameState.ballInHand && (!isMultiplayer || gameState.currentPlayer === myPlayerIndex) && (
+            <div className="absolute inset-0 pointer-events-none border-2 border-yellow-400/40 rounded-xl animate-pulse" />
+          )}
+        </div>
+
+        {/* Vertical Power Slider on the right */}
+        {isMyTurn && !gameState.isSimulating && !gameState.winner && !gameState.ballInHand && (
+          <div className="flex flex-col items-center gap-3 bg-slate-900/80 border border-white/10 p-4 rounded-xl h-[380px] w-16 shadow-lg shadow-black/40">
+            <span className="text-[10px] text-white/50 font-bold uppercase tracking-wider">PWR</span>
+            
+            <div className="relative flex-1 flex justify-center py-2">
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.02"
+                value={aimState.power}
+                onChange={(e) => setPower(parseFloat(e.target.value))}
+                className="accent-yellow-500 cursor-pointer h-full"
+                style={{
+                  writingMode: "vertical-lr",
+                  direction: "rtl",
+                  WebkitAppearance: "slider-vertical",
+                  width: "16px",
+                }}
+              />
+            </div>
+
+            <div className="flex flex-col items-center">
+              <span className="text-xs font-mono font-bold text-yellow-400">
+                {Math.round(aimState.power * 100)}%
+              </span>
+            </div>
+          </div>
         )}
       </div>
 
