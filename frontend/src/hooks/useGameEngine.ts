@@ -1282,10 +1282,25 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
 
       const bx = cueBallData.body.position.x;
       const by = cueBallData.body.position.y;
-      const angle = Math.atan2(pos.y - by, pos.x - bx);
+      const targetAngle = Math.atan2(pos.y - by, pos.x - bx);
 
-      currentAngleRef.current = angle;
-      setAimState((prev) => ({ ...prev, angle }));
+      let angleDiff = targetAngle - currentAngleRef.current;
+      while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+      while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+
+      if (e.shiftKey) {
+        // Slow aim: dampen angle tracking by 90% to allow pixel-perfect precision
+        currentAngleRef.current += angleDiff * 0.1;
+      } else {
+        // Direct tracking
+        currentAngleRef.current = targetAngle;
+      }
+
+      // Normalize current angle between -PI and PI
+      while (currentAngleRef.current < -Math.PI) currentAngleRef.current += Math.PI * 2;
+      while (currentAngleRef.current > Math.PI) currentAngleRef.current -= Math.PI * 2;
+
+      setAimState((prev) => ({ ...prev, angle: currentAngleRef.current }));
     },
     [getCueBall, getCanvasPos, gameState.winner, isMultiplayer, gameState.currentPlayer, myPlayerIndex, gameState.ballInHand]
   );
@@ -1551,6 +1566,33 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
       canvas.removeEventListener("wheel", handleWheelEvent);
     };
   }, [isMultiplayer, gameState.currentPlayer, myPlayerIndex, gameState.winner]);
+
+  // Listen to keyboard Arrow keys for fine-tuning stik angle
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (gameStateRef.current.isRunning || gameState.winner) return;
+      if (isMultiplayer && gameState.currentPlayer !== myPlayerIndex) return;
+      if (gameState.ballInHand) return; // ignore during placement
+
+      const step = 0.003; // micro step for high precision fine-tuning
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        currentAngleRef.current -= step;
+        while (currentAngleRef.current < -Math.PI) currentAngleRef.current += Math.PI * 2;
+        while (currentAngleRef.current > Math.PI) currentAngleRef.current -= Math.PI * 2;
+        setAimState((prev) => ({ ...prev, angle: currentAngleRef.current }));
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        currentAngleRef.current += step;
+        while (currentAngleRef.current < -Math.PI) currentAngleRef.current += Math.PI * 2;
+        while (currentAngleRef.current > Math.PI) currentAngleRef.current -= Math.PI * 2;
+        setAimState((prev) => ({ ...prev, angle: currentAngleRef.current }));
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isMultiplayer, gameState.currentPlayer, myPlayerIndex, gameState.winner, gameState.ballInHand]);
 
   // ─── Lifecycle ────────────────────────────────────────────────────────────
 
