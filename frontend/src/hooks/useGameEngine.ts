@@ -155,6 +155,10 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
   const isDraggingRef = useRef<boolean>(false);
   const firstBallHitThisTurnRef = useRef<number | null>(null);
 
+  // New refs for click-to-shoot and angle locking
+  const lockedAngleRef = useRef<number | null>(null);
+  const isReadyToFireRef = useRef<boolean>(false);
+
   // Keep latest rendering/game callbacks in refs to avoid stale closures in requestAnimationFrame
   const drawSceneRef = useRef<any>(null);
   const checkPocketsRef = useRef<any>(null);
@@ -1214,7 +1218,6 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
 
   const handleShoot = useCallback((powerOverride?: number) => {
     // Snapshot angle and power values immediately to freeze inputs at the millisecond of invocation
-    const shotAngle = currentAngleRef.current;
     const snapshotPower = currentPowerRef.current;
     const shotPower = powerOverride !== undefined ? powerOverride : snapshotPower;
     
@@ -1223,6 +1226,9 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
       console.log("[INPUT GUARD] Shot blocked. Power is 0.");
       return;
     }
+
+    // Use the locked angle if available, otherwise fallback to current angle
+    const shotAngle = lockedAngleRef.current !== null ? lockedAngleRef.current : currentAngleRef.current;
 
     if (gameStateRef.current.isRunning) return;
     if (gameState.winner) return;
@@ -1264,6 +1270,8 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
     shootCueBall(cueBallData.body, shotAngle, shotPower);
     currentPowerRef.current = 0;
     isDraggingRef.current = false;
+    lockedAngleRef.current = null;
+    isReadyToFireRef.current = false;
     setPlacementPos(null);
     setAimState((prev) => ({ ...prev, power: 0, isDragging: false }));
     setGameState((prev) => ({ ...prev, isSimulating: true, foulMessage: "" }));
@@ -1336,6 +1344,13 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
       if (isMultiplayer && gameState.currentPlayer !== myPlayerIndex) return;
 
       if (e.button === 0) {
+        // Only set lock and ready-to-fire if we are not placing the cue ball (Ball-in-Hand)
+        if (!gameState.ballInHand) {
+          lockedAngleRef.current = currentAngleRef.current;
+          isReadyToFireRef.current = true;
+          console.log("[LOCK ANGLE] Angle locked at MouseDown:", lockedAngleRef.current);
+        }
+
         isDraggingRef.current = true;
         setAimState((prev) => ({ ...prev, isDragging: true }));
 
@@ -1347,10 +1362,15 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
           const angle = Math.atan2(pos.y - by, pos.x - bx);
           currentAngleRef.current = angle;
           setAimState((prev) => ({ ...prev, angle }));
+
+          // Update locked angle to this clicked angle as well
+          if (!gameState.ballInHand) {
+            lockedAngleRef.current = angle;
+          }
         }
       }
     },
-    [gameState.winner, isMultiplayer, gameState.currentPlayer, myPlayerIndex, getCueBall, getCanvasPos]
+    [gameState.winner, isMultiplayer, gameState.currentPlayer, myPlayerIndex, getCueBall, getCanvasPos, gameState.ballInHand]
   );
 
   const handleMouseUp = useCallback(
@@ -1359,8 +1379,22 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
 
       isDraggingRef.current = false;
       setAimState((prev) => ({ ...prev, isDragging: false }));
+
+      // Shoot on mouse release if we were ready, not in ball-in-hand, game is ready, and power is set
+      if (isReadyToFireRef.current && !gameState.ballInHand && !gameStateRef.current.isRunning && !gameState.winner) {
+        const isMyTurn = !isMultiplayer || (gameState.currentPlayer === myPlayerIndex);
+        const snapshotPower = currentPowerRef.current;
+        if (isMyTurn && snapshotPower > 0) {
+          console.log(`[FIRE TRIGGER] Shoot triggered on MouseUp. Angle: ${lockedAngleRef.current}, Power: ${snapshotPower}`);
+          handleShoot();
+        }
+      }
+
+      // Reset the ready-to-fire states
+      isReadyToFireRef.current = false;
+      lockedAngleRef.current = null;
     },
-    []
+    [gameState.ballInHand, gameState.winner, isMultiplayer, gameState.currentPlayer, myPlayerIndex, handleShoot]
   );
 
   const handleCanvasClick = useCallback(

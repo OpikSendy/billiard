@@ -215,7 +215,7 @@ export default function GameCanvas({
               : "Click on table to place cue ball"
             : isMultiplayer && gameState.currentPlayer !== myPlayerIndex
             ? `Waiting for ${gameState.currentPlayer === 1 ? (playerNames?.p1 || "Player 1") : (playerNames?.p2 || "Player 2")} to shoot...`
-            : "Drag mouse to aim, scroll wheel to adjust power • Click Shoot or Space to fire"}
+            : "Drag mouse to aim, scroll wheel to adjust power • Click on Canvas or press Space to fire"}
         </div>
         
         <div className="flex items-center gap-3">
@@ -226,16 +226,6 @@ export default function GameCanvas({
               className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-lg text-xs shadow-lg shadow-cyan-600/20 active:scale-95 duration-100 transition-all font-semibold"
             >
               🎯 Declare Push Out
-            </button>
-          )}
-
-          {/* Shoot Button */}
-          {isMyTurn && !gameState.isSimulating && !gameState.winner && !gameState.ballInHand && (
-            <button
-              onClick={() => handleShoot()}
-              className="px-6 py-2 bg-yellow-500 hover:bg-yellow-400 text-slate-950 font-bold rounded-lg text-sm shadow-lg shadow-yellow-500/20 active:scale-95 duration-100 transition-all"
-            >
-              ⚡ Shoot
             </button>
           )}
 
