@@ -26,72 +26,97 @@ const CUSHION_FRICTION = 0.0;
 export function createTableWalls(config: TableConfig): Matter.Body[] {
   const { x, y, width, height } = config;
 
-  const wallOptions = {
+  const bodies: Matter.Body[] = [];
+
+  // Define cushion points matching the visual trapezoids exactly
+  const cushionsData = [
+    // Top-Left cushion
+    {
+      label: "cushion",
+      pts: [
+        { x: x + 35, y: y - 24 },
+        { x: x + width / 2 - 25, y: y - 24 },
+        { x: x + width / 2 - 25 - 12, y: y },
+        { x: x + 35 + 18, y: y }
+      ]
+    },
+    // Top-Right cushion
+    {
+      label: "cushion",
+      pts: [
+        { x: x + width / 2 + 25, y: y - 24 },
+        { x: x + width - 35, y: y - 24 },
+        { x: x + width - 35 - 18, y: y },
+        { x: x + width / 2 + 25 + 12, y: y }
+      ]
+    },
+    // Bottom-Left cushion
+    {
+      label: "cushion",
+      pts: [
+        { x: x + 35, y: y + height + 24 },
+        { x: x + width / 2 - 25, y: y + height + 24 },
+        { x: x + width / 2 - 25 - 12, y: y + height },
+        { x: x + 35 + 18, y: y + height }
+      ]
+    },
+    // Bottom-Right cushion
+    {
+      label: "cushion",
+      pts: [
+        { x: x + width / 2 + 25, y: y + height + 24 },
+        { x: x + width - 35, y: y + height + 24 },
+        { x: x + width - 35 - 18, y: y + height },
+        { x: x + width / 2 + 25 + 12, y: y + height }
+      ]
+    },
+    // Left cushion
+    {
+      label: "cushion",
+      pts: [
+        { x: x - 24, y: y + 35 },
+        { x: x - 24, y: y + height - 35 },
+        { x: x, y: y + height - 35 - 18 },
+        { x: x, y: y + 35 + 18 }
+      ]
+    },
+    // Right cushion
+    {
+      label: "cushion",
+      pts: [
+        { x: x + width + 24, y: y + 35 },
+        { x: x + width + 24, y: y + height - 35 },
+        { x: x + width, y: y + height - 35 - 18 },
+        { x: x + width, y: y + 35 + 18 }
+      ]
+    }
+  ];
+
+  cushionsData.forEach((c) => {
+    const body = Matter.Body.create({
+      isStatic: true,
+      restitution: CUSHION_RESTITUTION,
+      friction: CUSHION_FRICTION,
+      frictionStatic: 0,
+      label: c.label,
+      collisionFilter: { category: 0x0002, mask: 0x0001 },
+    });
+    const vertices = Matter.Vertices.create(c.pts, body);
+    const centre = Matter.Vertices.centre(vertices);
+    Matter.Body.setVertices(body, vertices);
+    Matter.Body.setPosition(body, centre);
+    bodies.push(body);
+  });
+
+  // Rounded bumper circles at the ends of the cushions to act as realistic pocket inlets
+  const bumperRadius = 7;
+  const bumperOptions = {
     isStatic: true,
     restitution: CUSHION_RESTITUTION,
     friction: CUSHION_FRICTION,
     frictionStatic: 0,
     label: "cushion",
     collisionFilter: { category: 0x0002, mask: 0x0001 },
-  };
-
-  const bodies: Matter.Body[] = [];
-
-  // Split Top wall: Left & Right segments
-  const topSegLength = width / 2 - 60;
-  const topY = y - WALL_THICKNESS / 2;
-  
-  // Top-Left cushion
-  bodies.push(Matter.Bodies.rectangle(
-    x + 35 + topSegLength / 2, topY,
-    topSegLength, WALL_THICKNESS,
-    { ...wallOptions, label: "cushion" }
-  ));
-  
-  // Top-Right cushion
-  bodies.push(Matter.Bodies.rectangle(
-    x + width / 2 + 25 + topSegLength / 2, topY,
-    topSegLength, WALL_THICKNESS,
-    { ...wallOptions, label: "cushion" }
-  ));
-
-  // Split Bottom wall: Left & Right segments
-  const botY = y + height + WALL_THICKNESS / 2;
-  // Bottom-Left cushion
-  bodies.push(Matter.Bodies.rectangle(
-    x + 35 + topSegLength / 2, botY,
-    topSegLength, WALL_THICKNESS,
-    { ...wallOptions, label: "cushion" }
-  ));
-  // Bottom-Right cushion
-  bodies.push(Matter.Bodies.rectangle(
-    x + width / 2 + 25 + topSegLength / 2, botY,
-    topSegLength, WALL_THICKNESS,
-    { ...wallOptions, label: "cushion" }
-  ));
-
-  // Left cushion
-  const sideSegLength = height - 70;
-  const leftX = x - WALL_THICKNESS / 2;
-  bodies.push(Matter.Bodies.rectangle(
-    leftX, y + 35 + sideSegLength / 2,
-    WALL_THICKNESS, sideSegLength,
-    { ...wallOptions, label: "cushion" }
-  ));
-
-  // Right cushion
-  const rightX = x + width + WALL_THICKNESS / 2;
-  bodies.push(Matter.Bodies.rectangle(
-    rightX, y + 35 + sideSegLength / 2,
-    WALL_THICKNESS, sideSegLength,
-    { ...wallOptions, label: "cushion" }
-  ));
-
-  // Rounded bumper circles at the ends of the cushions to act as realistic pocket inlets
-  const bumperRadius = 7;
-  const bumperOptions = {
-    ...wallOptions,
-    label: "cushion",
   };
 
   const bumpers = [
