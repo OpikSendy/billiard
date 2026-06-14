@@ -1213,7 +1213,8 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
   }, [getCueBall]);
 
   const handleShoot = useCallback((powerOverride?: number) => {
-    // Snapshot the power and angle immediately to freeze inputs at the millisecond of invocation
+    // Snapshot angle and power values immediately to freeze inputs at the millisecond of invocation
+    const shotAngle = currentAngleRef.current;
     const snapshotPower = currentPowerRef.current;
     const shotPower = powerOverride !== undefined ? powerOverride : snapshotPower;
     
@@ -1222,8 +1223,6 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
       console.log("[INPUT GUARD] Shot blocked. Power is 0.");
       return;
     }
-
-    const shotAngle = currentAngleRef.current;
 
     if (gameStateRef.current.isRunning) return;
     if (gameState.winner) return;
@@ -1285,6 +1284,20 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
       if (gameState.ballInHand) {
         setPlacementPos(pos);
         return;
+      }
+
+      // Canvas Boundary Guard: Check if mouse is within a safety margin from canvas borders
+      const canvasWidth = TABLE_CONFIG.x * 2 + TABLE_CONFIG.width + 60; // 900
+      const canvasHeight = TABLE_CONFIG.y * 2 + TABLE_CONFIG.height; // 460
+      const margin = 10;
+      const isInsideCanvas = 
+        pos.x >= margin && 
+        pos.x <= canvasWidth - margin && 
+        pos.y >= margin && 
+        pos.y <= canvasHeight - margin;
+
+      if (!isInsideCanvas) {
+        return; // Lock angle: ignore mouse movements near/outside canvas borders
       }
 
       const cueBallData = getCueBall();
@@ -1567,12 +1580,19 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
     };
   }, [isMultiplayer, gameState.currentPlayer, myPlayerIndex, gameState.winner]);
 
-  // Listen to keyboard Arrow keys for fine-tuning stik angle
+  // Listen to keyboard Arrow keys and Spacebar for fine-tuning angle and shooting
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (gameStateRef.current.isRunning || gameState.winner) return;
+      if (gameStateRef.current.isRunning || gameState.isSimulating || gameState.winner) return;
       if (isMultiplayer && gameState.currentPlayer !== myPlayerIndex) return;
       if (gameState.ballInHand) return; // ignore during placement
+
+      // Spacebar to shoot (ready state checked above)
+      if (e.code === "Space" || e.key === " ") {
+        e.preventDefault();
+        handleShoot();
+        return;
+      }
 
       const step = 0.003; // micro step for high precision fine-tuning
       if (e.key === "ArrowLeft") {
@@ -1592,7 +1612,7 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isMultiplayer, gameState.currentPlayer, myPlayerIndex, gameState.winner, gameState.ballInHand]);
+  }, [isMultiplayer, gameState.currentPlayer, myPlayerIndex, gameState.winner, gameState.isSimulating, gameState.ballInHand, handleShoot]);
 
   // ─── Lifecycle ────────────────────────────────────────────────────────────
 

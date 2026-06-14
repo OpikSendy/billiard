@@ -42,17 +42,7 @@ export default function GameCanvas({
 
   const { declarePushOut, resolvePushOut } = useSocket();
 
-  // Keyboard shoot (Spacebar)
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.code === "Space") {
-        e.preventDefault();
-        handleShoot();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [handleShoot]);
+
 
   const isMyTurn = !isMultiplayer || gameState.currentPlayer === myPlayerIndex;
 
