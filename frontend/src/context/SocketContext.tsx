@@ -51,6 +51,8 @@ export interface FoulData {
   railContactMade: boolean;
   pocketedThisTurn: number[];
   foul: string | null;
+  isBreak?: boolean;
+  breakCushionCount?: number;
 }
 
 export interface TurnResult {
