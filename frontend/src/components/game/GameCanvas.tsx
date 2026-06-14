@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useGameEngine, TABLE_CONFIG, UseGameEngineReturn } from "@/hooks/useGameEngine";
 import { useSocket } from "@/hooks/useSocket";
+import TurnTransition from "./TurnTransition";
 
 const CANVAS_WIDTH = TABLE_CONFIG.x * 2 + TABLE_CONFIG.width + 60; // extra for power meter
 const CANVAS_HEIGHT = TABLE_CONFIG.y * 2 + TABLE_CONFIG.height;
@@ -304,6 +305,18 @@ export default function GameCanvas({
           onReset={resetGame}
           isMultiplayer={isMultiplayer}
           onLeave={onLeave}
+        />
+      )}
+
+      {/* Turn Transition Banner */}
+      {!gameState.winner && (
+        <TurnTransition
+          currentPlayer={gameState.currentPlayer}
+          myPlayerIndex={myPlayerIndex}
+          isMultiplayer={isMultiplayer}
+          foulMessage={gameState.foulMessage}
+          turnNumber={gameState.turnNumber}
+          playerNames={playerNames}
         />
       )}
     </div>
