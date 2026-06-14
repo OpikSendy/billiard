@@ -1171,8 +1171,15 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
       const cueBall = getCueBall();
       if (cueBall) {
         cueBall.isPocketed = false;
+        cueBall.body.collisionFilter.mask = 0x0001 | 0x0002 | 0x0004;
         Matter.Body.setPosition(cueBall.body, CUE_BALL_START);
         Matter.Body.setVelocity(cueBall.body, { x: 0, y: 0 });
+        if (physicsRef.current) {
+          const worldBodies = Matter.Composite.allBodies(physicsRef.current.world);
+          if (!worldBodies.includes(cueBall.body)) {
+            Matter.World.add(physicsRef.current.world, cueBall.body);
+          }
+        }
       }
     }
 
@@ -1192,8 +1199,15 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
     const cueBallData = getCueBall();
     if (!cueBallData) return;
     cueBallData.isPocketed = false;
+    cueBallData.body.collisionFilter.mask = 0x0001 | 0x0002 | 0x0004;
     Matter.Body.setPosition(cueBallData.body, { x, y });
     Matter.Body.setVelocity(cueBallData.body, { x: 0, y: 0 });
+    if (physicsRef.current) {
+      const worldBodies = Matter.Composite.allBodies(physicsRef.current.world);
+      if (!worldBodies.includes(cueBallData.body)) {
+        Matter.World.add(physicsRef.current.world, cueBallData.body);
+      }
+    }
     setPlacementPos(null); // Clear placement preview coordinates
     setGameState((prev) => ({ ...prev, ballInHand: false, foulMessage: "" }));
   }, [getCueBall]);
@@ -1401,8 +1415,15 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
 
     // Sync cue ball placement chosen by opponent
     cueBallData.isPocketed = false;
+    cueBallData.body.collisionFilter.mask = 0x0001 | 0x0002 | 0x0004;
     Matter.Body.setPosition(cueBallData.body, lastOpponentShot.cueBallPos);
     Matter.Body.setVelocity(cueBallData.body, { x: 0, y: 0 });
+    if (physicsRef.current) {
+      const worldBodies = Matter.Composite.allBodies(physicsRef.current.world);
+      if (!worldBodies.includes(cueBallData.body)) {
+        Matter.World.add(physicsRef.current.world, cueBallData.body);
+      }
+    }
 
     shootCueBall(cueBallData.body, lastOpponentShot.angle, lastOpponentShot.power);
 
@@ -1450,8 +1471,15 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
       if (cueBall) {
         if (nextSocketState.currentPlayerIndex === myPlayerIndex && nextSocketState.ballInHand) {
           cueBall.isPocketed = false;
+          cueBall.body.collisionFilter.mask = 0x0001 | 0x0002 | 0x0004;
           Matter.Body.setPosition(cueBall.body, CUE_BALL_START);
           Matter.Body.setVelocity(cueBall.body, { x: 0, y: 0 });
+          if (physicsRef.current) {
+            const worldBodies = Matter.Composite.allBodies(physicsRef.current.world);
+            if (!worldBodies.includes(cueBall.body)) {
+              Matter.World.add(physicsRef.current.world, cueBall.body);
+            }
+          }
         }
       }
     }
