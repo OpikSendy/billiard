@@ -77,3 +77,24 @@ html {
 canvas {
   display: block;
 }
+
+/* Turn transition animations */
+@keyframes zoom-in-bounce {
+  0% { transform: scale(0.6); opacity: 0; }
+  70% { transform: scale(1.05); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes fade-out-pure {
+  0% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+.animate-zoom-in-bounce {
+  animation: zoom-in-bounce 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+.animate-fade-out-delayed {
+  animation: fade-out-pure 0.3s ease-out 1.2s forwards;
+}
+
