@@ -5,6 +5,8 @@ export type FoulReason =
   | "wrong_ball"        // cue ball hit wrong ball first
   | "no_ball_hit"       // cue ball didn't hit any ball
   | "no_rail_contact"   // no ball touched a cushion after hit (competitive rule)
+  | "bad_break"         // illegal break (less than 4 balls hit rail and no ball pocketed)
+  | "time_foul"         // shot timer ran out
   | null;
 
 export interface TurnResult {
@@ -22,6 +24,8 @@ export interface GameState {
   pocketedThisTurn: number[];
   railContactMade: boolean;
   isRunning: boolean;        // physics still simulating
+  isBreak?: boolean;         // is this the break shot?
+  breakCushionCount?: number; // target balls hit cushions on break
 }
 
 /**
@@ -38,7 +42,7 @@ export function getLowestBall(balls: BallData[]): number | null {
  * Evaluates the result of a completed turn.
  */
 export function evaluateTurn(state: GameState): TurnResult {
-  const { cueBallPocketed, firstHitBall, pocketedThisTurn, balls, railContactMade } =
+  const { cueBallPocketed, firstHitBall, pocketedThisTurn, balls, railContactMade, isBreak, breakCushionCount } =
     state;
 
   const activeBalls = balls.filter((b) => b.number > 0 && !b.isPocketed);
@@ -60,17 +64,7 @@ export function evaluateTurn(state: GameState): TurnResult {
     };
   }
 
-  // 2. Wrong ball: cue ball didn't hit the lowest ball first
-  if (firstHitBall !== null && firstHitBall !== lowestBefore) {
-    return {
-      foul: "wrong_ball",
-      ballsPocketed: pocketedThisTurn,
-      won: false,
-      switchTurn: true,
-    };
-  }
-
-  // 3. No legal hit at all
+  // 2. No legal hit at all
   if (firstHitBall === null) {
     return {
       foul: "no_ball_hit",
@@ -80,8 +74,31 @@ export function evaluateTurn(state: GameState): TurnResult {
     };
   }
 
-  // 4. No rail contact after hit (competitive rule)
-  if (!railContactMade) {
+  // 3. Wrong ball: cue ball didn't hit the lowest ball first
+  if (firstHitBall !== lowestBefore) {
+    return {
+      foul: "wrong_ball",
+      ballsPocketed: pocketedThisTurn,
+      won: false,
+      switchTurn: true,
+    };
+  }
+
+  // 4. Bad break check
+  if (isBreak) {
+    const legalBreak = pocketedThisTurn.length > 0 || (breakCushionCount !== undefined && breakCushionCount >= 4);
+    if (!legalBreak) {
+      return {
+        foul: "bad_break",
+        ballsPocketed: pocketedThisTurn,
+        won: false,
+        switchTurn: true,
+      };
+    }
+  }
+
+  // 5. No rail contact after hit (competitive rule, only for non-break shots)
+  if (!isBreak && !railContactMade) {
     return {
       foul: "no_rail_contact",
       ballsPocketed: pocketedThisTurn,
@@ -117,12 +134,14 @@ export function evaluateTurn(state: GameState): TurnResult {
  */
 export function resetTurnState(
   state: GameState
-): Pick<GameState, "cueBallPocketed" | "firstHitBall" | "pocketedThisTurn" | "railContactMade"> {
+): Pick<GameState, "cueBallPocketed" | "firstHitBall" | "pocketedThisTurn" | "railContactMade" | "isBreak" | "breakCushionCount"> {
   return {
     cueBallPocketed: false,
     firstHitBall: null,
     pocketedThisTurn: [],
     railContactMade: false,
+    isBreak: false,
+    breakCushionCount: 0,
   };
 }
 
@@ -139,6 +158,10 @@ export function getFoulMessage(foul: FoulReason): string {
       return "Foul! No ball was hit. Ball in hand!";
     case "no_rail_contact":
       return "Foul! No rail contact after hit. Ball in hand!";
+    case "bad_break":
+      return "Foul! Illegal break. Must pocket a ball or drive 4 balls to cushion. Ball in hand!";
+    case "time_foul":
+      return "Foul! Shot clock expired. Ball in hand!";
     default:
       return "";
   }
