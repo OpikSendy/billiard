@@ -1213,6 +1213,18 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
   }, [getCueBall]);
 
   const handleShoot = useCallback((powerOverride?: number) => {
+    // Snapshot the power and angle immediately to freeze inputs at the millisecond of invocation
+    const snapshotPower = currentPowerRef.current;
+    const shotPower = powerOverride !== undefined ? powerOverride : snapshotPower;
+    
+    // Strict guard clause: block shot if power is 0 (or <= 0)
+    if (shotPower <= 0) {
+      console.log("[INPUT GUARD] Shot blocked. Power is 0.");
+      return;
+    }
+
+    const shotAngle = currentAngleRef.current;
+
     if (gameStateRef.current.isRunning) return;
     if (gameState.winner) return;
     const cueBallData = getCueBall();
@@ -1221,11 +1233,9 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
     // In multiplayer, check if it's our turn
     if (isMultiplayer && gameState.currentPlayer !== myPlayerIndex) return;
 
-    const shotPower = powerOverride !== undefined ? powerOverride : (currentPowerRef.current > 0.01 ? currentPowerRef.current : 0.1);
-
     if (isMultiplayer && onEmitShot) {
       onEmitShot({
-        angle: currentAngleRef.current,
+        angle: shotAngle,
         power: shotPower,
         cueBallPos: {
           x: cueBallData.body.position.x,
@@ -1252,7 +1262,7 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
     // Play stik strike sound (volume scales with shot power)
     soundManager.play("shoot", shotPower);
 
-    shootCueBall(cueBallData.body, currentAngleRef.current, shotPower);
+    shootCueBall(cueBallData.body, shotAngle, shotPower);
     currentPowerRef.current = 0;
     isDraggingRef.current = false;
     setPlacementPos(null);
@@ -1334,20 +1344,10 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       if (e.button !== 0) return;
 
-      const wasDragging = isDraggingRef.current;
       isDraggingRef.current = false;
       setAimState((prev) => ({ ...prev, isDragging: false }));
-
-      // Shoot on click/release if we were dragging, not in ball-in-hand mode, and game is not running/won
-      if (wasDragging && !gameState.ballInHand && !gameStateRef.current.isRunning && !gameState.winner) {
-        const isMyTurn = !isMultiplayer || (gameState.currentPlayer === myPlayerIndex);
-        if (isMyTurn) {
-          // Trigger a temporary full-power shot (power = 1.0)
-          handleShoot(1.0);
-        }
-      }
     },
-    [gameState.ballInHand, gameState.winner, isMultiplayer, gameState.currentPlayer, myPlayerIndex, handleShoot]
+    []
   );
 
   const handleCanvasClick = useCallback(
