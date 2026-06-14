@@ -7,6 +7,7 @@ import { createTableWalls, getTablePockets, checkPocketed, createTablePockets, T
 import { createCueBall, createRackedBalls, shootCueBall, BallData, BALL_RADIUS } from "@/lib/physics/balls";
 import { getLowestBall, evaluateTurn, resetTurnState, getFoulMessage, GameState, TurnResult } from "@/lib/game/rules";
 import { GameStateInfo, ShotData, BallPos, FoulData, TurnResult as SocketTurnResult } from "@/hooks/useSocket";
+import { soundManager } from "@/lib/audio/soundManager";
 
 export interface AimState {
   angle: number;       // radians
@@ -27,6 +28,7 @@ export interface GameHookState {
   pushOutAvailable?: boolean;
   isPushOutActive?: boolean;
   pushOutResolvePending?: boolean;
+  turnNumber: number; // local turn tracking
 }
 
 export interface UseGameEngineProps {
@@ -80,6 +82,52 @@ const RACK_START = {
   y: TABLE_CONFIG.y + TABLE_CONFIG.height / 2,
 };
 
+/**
+ * Validates whether the cue ball can be placed at (cx, cy).
+ * Blocks placement if coordinates overlap with cushion borders, active target balls, or pocket holes.
+ */
+function validateCueBallPlacement(
+  cx: number,
+  cy: number,
+  balls: BallData[],
+  pockets: Pocket[]
+): boolean {
+  const { x, y, width, height } = TABLE_CONFIG;
+
+  // 1. Table cushion boundary check (keep ball fully inside cushion boundaries)
+  if (
+    cx < x + BALL_RADIUS ||
+    cx > x + width - BALL_RADIUS ||
+    cy < y + BALL_RADIUS ||
+    cy > y + height - BALL_RADIUS
+  ) {
+    return false;
+  }
+
+  // 2. Overlap with existing balls check (minimum separation is 2 * radius)
+  for (const ball of balls) {
+    if (ball.number === 0 || ball.isPocketed) continue;
+    const dx = cx - ball.body.position.x;
+    const dy = cy - ball.body.position.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < BALL_RADIUS * 2) {
+      return false;
+    }
+  }
+
+  // 3. Overlap with pocket holes check (prevent placing directly inside a pocket sensor area)
+  for (const pocket of pockets) {
+    const dx = cx - pocket.x;
+    const dy = cy - pocket.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < pocket.radius + BALL_RADIUS) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineReturn {
   const {
     isMultiplayer = false,
@@ -129,6 +177,9 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
     isDragging: false,
   });
 
+  const breakCushionHitBallsRef = useRef<Set<number>>(new Set());
+  const [placementPos, setPlacementPos] = useState<{ x: number; y: number } | null>(null);
+
   const [gameState, setGameState] = useState<GameHookState>({
     isSimulating: false,
     currentPlayer: 1,
@@ -142,6 +193,7 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
     pushOutAvailable: false,
     isPushOutActive: false,
     pushOutResolvePending: false,
+    turnNumber: 1,
   });
 
   // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -200,22 +252,53 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
 
     // Register collision events
     Matter.Events.on(physics.engine, "collisionStart", (event) => {
+      // Helper functions for defensive label matching
+      const isCueBall = (label: string) => 
+        label === 'cue-ball' || label === 'ball-0' || label.toLowerCase().includes('cue');
+
+      const getTargetBallNumber = (label: string): number | null => {
+        if (!label) return null;
+        const match = label.match(/(?:target-ball-|ball-)(\d+)/);
+        if (match && match[1]) {
+          const num = parseInt(match[1], 10);
+          return num === 0 ? null : num; // 0 belongs to cue ball
+        }
+        return null;
+      };
+
+      const isTargetBallLabel = (l: string) => /(?:target-ball-|ball-)(\d+)/.test(l) && !isCueBall(l);
+      const isCushionLabel = (l: string) => l === 'cushion';
+
+      // 0. Sound Effects for collisions
+      for (const pair of event.pairs) {
+        const { bodyA, bodyB } = pair;
+        if (!bodyA.label || !bodyB.label) continue;
+
+        const isBallA = isCueBall(bodyA.label) || isTargetBallLabel(bodyA.label);
+        const isBallB = isCueBall(bodyB.label) || isTargetBallLabel(bodyB.label);
+        const isCushA = isCushionLabel(bodyA.label);
+        const isCushB = isCushionLabel(bodyB.label);
+
+        if (isBallA && isBallB) {
+          // Ball-to-ball hit sound with dynamic volume scaling
+          const relVel = {
+            x: bodyA.velocity.x - bodyB.velocity.x,
+            y: bodyA.velocity.y - bodyB.velocity.y,
+          };
+          const speed = Math.sqrt(relVel.x * relVel.x + relVel.y * relVel.y);
+          const volume = Math.min(1.0, speed / 8);
+          soundManager.play("collision", volume);
+        } else if ((isBallA && isCushB) || (isBallB && isCushA)) {
+          // Ball-to-cushion hit sound with dynamic volume scaling
+          const ball = isBallA ? bodyA : bodyB;
+          const speed = Math.sqrt(ball.velocity.x * ball.velocity.x + ball.velocity.y * ball.velocity.y);
+          const volume = Math.min(1.0, speed / 8);
+          soundManager.play("cushion", volume);
+        }
+      }
+
       // 1. Process first ball hit logic
       if (firstBallHitThisTurnRef.current === null) {
-        // Helper functions for defensive label matching
-        const isCueBall = (label: string) => 
-          label === 'cue-ball' || label === 'ball-0' || label.toLowerCase().includes('cue');
-
-        const getTargetBallNumber = (label: string): number | null => {
-          if (!label) return null;
-          const match = label.match(/(?:target-ball-|ball-)(\d+)/);
-          if (match && match[1]) {
-            const num = parseInt(match[1], 10);
-            return num === 0 ? null : num; // 0 belongs to the cue ball in old format
-          }
-          return null;
-        };
-
         for (const pair of event.pairs) {
           const { bodyA, bodyB } = pair;
           if (!bodyA.label || !bodyB.label) continue;
@@ -251,19 +334,31 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
         }
       }
 
-      // 2. Process rail contact (cushion timing logic)
+      // 2. Process rail contact (cushion timing logic & break cushion counting)
       for (const pair of event.pairs) {
         const { bodyA, bodyB } = pair;
         if (!bodyA.label || !bodyB.label) continue;
-        const isCueBallLabel = (l: string) => l === 'cue-ball' || l === 'ball-0' || l.toLowerCase().includes('cue');
-        const isTargetBallLabel = (l: string) => /(?:target-ball-|ball-)(\d+)/.test(l) && !isCueBallLabel(l);
-        const isCushionLabel = (l: string) => l === 'cushion';
 
-        const isAnyBall = (b: Matter.Body) => isCueBallLabel(b.label) || isTargetBallLabel(b.label);
+        const isAnyBall = (b: Matter.Body) => isCueBall(b.label) || isTargetBallLabel(b.label);
+        
         if ((isAnyBall(bodyA) && isCushionLabel(bodyB.label)) || (isAnyBall(bodyB) && isCushionLabel(bodyA.label))) {
           // Rail contact is only valid if it occurs AFTER a legal hit has already been registered
-          if (gameStateRef.current.isRunning && firstBallHitThisTurnRef.current !== null) {
-            gameStateRef.current.railContactMade = true;
+          if (gameStateRef.current.isRunning) {
+            if (firstBallHitThisTurnRef.current !== null) {
+              gameStateRef.current.railContactMade = true;
+            }
+
+            // If it's a break shot, track target balls that hit the cushion
+            if (gameStateRef.current.isBreak) {
+              const ballBody = isAnyBall(bodyA) ? bodyA : bodyB;
+              if (isTargetBallLabel(ballBody.label)) {
+                const num = getTargetBallNumber(ballBody.label);
+                if (num !== null && num > 0) {
+                  breakCushionHitBallsRef.current.add(num);
+                  gameStateRef.current.breakCushionCount = breakCushionHitBallsRef.current.size;
+                }
+              }
+            }
           }
         }
       }
@@ -273,9 +368,7 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
         const { bodyA, bodyB } = pair;
         if (!bodyA.label || !bodyB.label) continue;
 
-        const isCueBallLabel = (l: string) => l === 'cue-ball' || l === 'ball-0' || l.toLowerCase().includes('cue');
-        const isTargetBallLabel = (l: string) => /(?:target-ball-|ball-)(\d+)/.test(l) && !isCueBallLabel(l);
-        const isBallBody = (b: Matter.Body) => isCueBallLabel(b.label) || isTargetBallLabel(b.label);
+        const isBallBody = (b: Matter.Body) => isCueBall(b.label) || isTargetBallLabel(b.label);
         const isPocketBody = (b: Matter.Body) => b.label === "pocket";
 
         if ((isBallBody(bodyA) && isPocketBody(bodyB)) || (isBallBody(bodyB) && isPocketBody(bodyA))) {
@@ -298,6 +391,9 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
               ballData.currentVisualRadius = BALL_RADIUS;
               ballData.targetPocketX = pocketBody.position.x;
               ballData.targetPocketY = pocketBody.position.y;
+
+              // Play pocket sink SFX
+              soundManager.play("pocket", 0.9);
 
               // Zero physical velocity
               Matter.Body.setVelocity(ballBody, { x: 0, y: 0 });
@@ -325,6 +421,8 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
       pocketedThisTurn: [],
       railContactMade: false,
       isRunning: false,
+      isBreak: false,
+      breakCushionCount: 0,
     };
 
     setGameState({
@@ -340,9 +438,9 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
       pushOutAvailable: false,
       isPushOutActive: false,
       pushOutResolvePending: false,
+      turnNumber: 1,
     });
 
-    startEngine(physics);
     startRenderLoop();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -355,12 +453,36 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
+    let lastTime = performance.now();
+    let accumulator = 0;
+    const fixedDelta = 1000 / 60; // ~16.67ms per frame
+
     const render = () => {
+      const currentTime = performance.now();
+      let elapsed = currentTime - lastTime;
+      lastTime = currentTime;
+
+      // Prevent "spiral of death" (large lag spikes causing infinite loops)
+      if (elapsed > 100) elapsed = 100;
+
+      // Accumulator loop for strict fixed-time physics updates
+      if (gameStateRef.current.isRunning) {
+        accumulator += elapsed;
+        while (accumulator >= fixedDelta) {
+          if (physicsRef.current) {
+            Matter.Engine.update(physicsRef.current.engine, fixedDelta);
+          }
+          accumulator -= fixedDelta;
+        }
+      } else {
+        accumulator = 0; // Reset when simulation is not running
+      }
+
       if (drawSceneRef.current) {
         drawSceneRef.current(ctx, canvas.width, canvas.height);
       }
+      
       // Per-frame pocket polling: catches slow-moving balls that creep into pockets
-      // (collision sensor handles fast balls; this handles the rest)
       if (gameStateRef.current.isRunning && checkPocketsRef.current) {
         checkPocketsRef.current();
       }
@@ -477,8 +599,52 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
           drawCueStick(ctx, cueBallData.body.position, currentAngleRef.current, currentPowerRef.current);
         }
       }
+
+      // 3. Draw Ball-in-Hand Preview (if cue ball is currently being placed)
+      const isMyTurn = !isMultiplayer || (gameState.currentPlayer === myPlayerIndex);
+      if (gameState.ballInHand && placementPos && isMyTurn) {
+        const isValid = validateCueBallPlacement(
+          placementPos.x,
+          placementPos.y,
+          ballsRef.current,
+          pocketsRef.current
+        );
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(placementPos.x, placementPos.y, BALL_RADIUS, 0, Math.PI * 2);
+        
+        if (isValid) {
+          ctx.fillStyle = "rgba(255, 255, 255, 0.4)";
+          ctx.fill();
+          ctx.strokeStyle = "#ffffff";
+        } else {
+          ctx.fillStyle = "rgba(239, 68, 68, 0.35)";
+          ctx.fill();
+          ctx.strokeStyle = "#ef4444";
+        }
+
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([3, 3]);
+        ctx.stroke();
+
+        if (!isValid) {
+          // Draw a small red warning 'X' in the center
+          ctx.strokeStyle = "#ef4444";
+          ctx.lineWidth = 2;
+          ctx.setLineDash([]);
+          ctx.beginPath();
+          const size = 5;
+          ctx.moveTo(placementPos.x - size, placementPos.y - size);
+          ctx.lineTo(placementPos.x + size, placementPos.y + size);
+          ctx.moveTo(placementPos.x + size, placementPos.y - size);
+          ctx.lineTo(placementPos.x - size, placementPos.y + size);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
     },
-    [getCueBall, isMultiplayer, myPlayerIndex, gameState.currentPlayer]
+    [getCueBall, isMultiplayer, myPlayerIndex, gameState.currentPlayer, gameState.ballInHand, placementPos]
   );
 
   const drawTable = (ctx: CanvasRenderingContext2D) => {
@@ -914,6 +1080,9 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
           ballData.targetPocketX = pocket.x;
           ballData.targetPocketY = pocket.y;
 
+          // Play pocket sound
+          soundManager.play("pocket", 0.9);
+
           // Freeze physics immediately
           Matter.Body.setVelocity(ballData.body, { x: 0, y: 0 });
           Matter.Body.setAngularVelocity(ballData.body, 0);
@@ -951,6 +1120,8 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
         railContactMade: gameStateRef.current.railContactMade,
         pocketedThisTurn: [...gameStateRef.current.pocketedThisTurn],
         foul: null,
+        isBreak: gameStateRef.current.isBreak,
+        breakCushionCount: gameStateRef.current.breakCushionCount,
       };
 
       if (onEmitSyncResult) {
@@ -959,6 +1130,8 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
       return;
     }
 
+    // Local single player turn evaluation
+    gameStateRef.current.isBreak = gameState.turnNumber === 1;
     const result: TurnResult = evaluateTurn(gameStateRef.current);
 
     setGameState((prev) => {
@@ -976,6 +1149,8 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
         ? prev.currentPlayer === 1 ? 2 : 1
         : prev.currentPlayer;
 
+      const nextTurnNumber = prev.turnNumber + 1;
+
       const newState: GameHookState = {
         ...prev,
         isSimulating: false,
@@ -983,8 +1158,9 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
         foulMessage: result.foul ? getFoulMessage(result.foul) : "",
         winner,
         pocketedBalls: newPocketed,
-        ballInHand: result.foul === "scratch" || result.foul === "wrong_ball",
+        ballInHand: result.foul === "scratch" || result.foul === "wrong_ball" || result.foul === "bad_break" || result.foul === "time_foul",
         lowestBall: getLowestBall(ballsRef.current),
+        turnNumber: nextTurnNumber,
       };
 
       return newState;
@@ -1002,12 +1178,13 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
 
     // Reset turn tracking
     firstBallHitThisTurnRef.current = null;
+    breakCushionHitBallsRef.current.clear();
     Object.assign(gameStateRef.current, resetTurnState(gameStateRef.current));
     gameStateRef.current.activeBalls = ballsRef.current.filter(
       (b) => !b.isPocketed
     );
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [getCueBall, isMultiplayer, onEmitSyncResult]);
+  }, [getCueBall, isMultiplayer, onEmitSyncResult, gameState.turnNumber]);
 
   // ─── Mouse / Input Handlers ───────────────────────────────────────────────
 
@@ -1017,6 +1194,7 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
     cueBallData.isPocketed = false;
     Matter.Body.setPosition(cueBallData.body, { x, y });
     Matter.Body.setVelocity(cueBallData.body, { x: 0, y: 0 });
+    setPlacementPos(null); // Clear placement preview coordinates
     setGameState((prev) => ({ ...prev, ballInHand: false, foulMessage: "" }));
   }, [getCueBall]);
 
@@ -1043,20 +1221,31 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
     }
 
     firstBallHitThisTurnRef.current = null;
+    breakCushionHitBallsRef.current.clear();
+    
+    // Set break shot indicators
+    const isBreak = gameState.turnNumber === 1;
     Object.assign(gameStateRef.current, {
       firstHitBall: null,
       railContactMade: false,
       pocketedThisTurn: [],
       cueBallPocketed: false,
       isRunning: true,
+      isBreak: isBreak,
+      breakCushionCount: 0,
     });
+
+    // Play stik strike sound (volume scales with shot power)
+    soundManager.play("shoot", shotPower);
 
     shootCueBall(cueBallData.body, currentAngleRef.current, shotPower);
     currentPowerRef.current = 0;
     isDraggingRef.current = false;
+    setPlacementPos(null);
     setAimState((prev) => ({ ...prev, power: 0, isDragging: false }));
     setGameState((prev) => ({ ...prev, isSimulating: true, foulMessage: "" }));
-  }, [getCueBall, gameState.winner, isMultiplayer, myPlayerIndex, gameState.currentPlayer, onEmitShot]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [getCueBall, gameState.winner, isMultiplayer, myPlayerIndex, gameState.currentPlayer, gameState.turnNumber, onEmitShot]);
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -1066,10 +1255,17 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
       // In multiplayer, check if it's our turn
       if (isMultiplayer && gameState.currentPlayer !== myPlayerIndex) return;
 
+      const pos = getCanvasPos(e);
+
+      // Track placement preview coordinates if placing
+      if (gameState.ballInHand) {
+        setPlacementPos(pos);
+        return;
+      }
+
       const cueBallData = getCueBall();
       if (!cueBallData || cueBallData.isPocketed) return;
 
-      const pos = getCanvasPos(e);
       const bx = cueBallData.body.position.x;
       const by = cueBallData.body.position.y;
       const angle = Math.atan2(pos.y - by, pos.x - bx);
@@ -1077,7 +1273,7 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
       currentAngleRef.current = angle;
       setAimState((prev) => ({ ...prev, angle }));
     },
-    [getCueBall, getCanvasPos, gameState.winner, isMultiplayer, gameState.currentPlayer, myPlayerIndex]
+    [getCueBall, getCanvasPos, gameState.winner, isMultiplayer, gameState.currentPlayer, myPlayerIndex, gameState.ballInHand]
   );
 
   const handleMouseDown = useCallback(
@@ -1133,11 +1329,18 @@ export function useGameEngine(props: UseGameEngineProps = {}): UseGameEngineRetu
       if (isMultiplayer && gameState.currentPlayer !== myPlayerIndex) return;
 
       const pos = getCanvasPos(e);
-      const { x, y, width, height } = TABLE_CONFIG;
-      // Clamp within table bounds
-      const cx = Math.max(x + BALL_RADIUS + 5, Math.min(x + width - BALL_RADIUS - 5, pos.x));
-      const cy = Math.max(y + BALL_RADIUS + 5, Math.min(y + height - BALL_RADIUS - 5, pos.y));
-      placeCueBall(cx, cy);
+      
+      // Validate placement position against cushion boundary, target balls, and pockets
+      const isValid = validateCueBallPlacement(
+        pos.x,
+        pos.y,
+        ballsRef.current,
+        pocketsRef.current
+      );
+
+      if (isValid) {
+        placeCueBall(pos.x, pos.y);
+      }
     },
     [gameState.ballInHand, getCanvasPos, isMultiplayer, gameState.currentPlayer, myPlayerIndex, placeCueBall]
   );
