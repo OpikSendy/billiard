@@ -370,6 +370,8 @@ function buildTurnResult(foulData, positions, isPushOutActive = false) {
     railContactMade,
     pocketedThisTurn,
     foul: existingFoul,
+    isBreak,
+    breakCushionCount,
   } = foulData;
 
   const activeBalls = positions.filter((p) => !p.isPocketed && p.number > 0);
@@ -385,8 +387,17 @@ function buildTurnResult(foulData, positions, isPushOutActive = false) {
     return { foul: "scratch", ballsPocketed: pocketedThisTurn, won: false, switchTurn: true };
   }
 
+  // Normal foul checks: first hit must be legal
+  if (firstHitBall === null) {
+    return { foul: "no_ball_hit", ballsPocketed: pocketedThisTurn, won: false, switchTurn: true };
+  }
+
+  if (lowestBeforeTurn !== null && firstHitBall !== lowestBeforeTurn) {
+    return { foul: "wrong_ball", ballsPocketed: pocketedThisTurn, won: false, switchTurn: true };
+  }
+
   if (isPushOutActive) {
-    // Push Out: ignore wrong ball and no cushion contact!
+    // Push Out: ignore cushion contact!
     // giliran switches but no foul is assessed, and opponent has the option to pass it back
     return {
       foul: null,
@@ -397,12 +408,16 @@ function buildTurnResult(foulData, positions, isPushOutActive = false) {
     };
   }
 
-  // Normal foul checks
-  if (firstHitBall === null || (lowestBeforeTurn !== null && firstHitBall !== lowestBeforeTurn)) {
-    return { foul: "wrong_ball", ballsPocketed: pocketedThisTurn, won: false, switchTurn: true };
+  // Break shot check (turn 1)
+  if (isBreak) {
+    const legalBreak = pocketedThisTurn.length > 0 || (breakCushionCount !== undefined && breakCushionCount >= 4);
+    if (!legalBreak) {
+      return { foul: "bad_break", ballsPocketed: pocketedThisTurn, won: false, switchTurn: true };
+    }
   }
 
-  if (!railContactMade) {
+  // Normal rail contact check
+  if (!isBreak && !railContactMade) {
     return { foul: "no_rail_contact", ballsPocketed: pocketedThisTurn, won: false, switchTurn: true };
   }
 

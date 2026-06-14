@@ -131,12 +131,18 @@ function mergeFoulData(f1, f2) {
     ...new Set([...f1.pocketedThisTurn, ...f2.pocketedThisTurn]),
   ];
 
+  // Break shot variables merge: conservative (max cushions and logic OR)
+  const isBreak = f1.isBreak || f2.isBreak || false;
+  const breakCushionCount = Math.max(f1.breakCushionCount || 0, f2.breakCushionCount || 0);
+
   return {
     cueBallPocketed,
     firstHitBall,
     railContactMade,
     pocketedThisTurn,
     foul,
+    isBreak,
+    breakCushionCount,
   };
 }
 
